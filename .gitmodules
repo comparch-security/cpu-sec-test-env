@@ -1,0 +1,6 @@
+[submodule "benchmark"]
+	path = benchmark
+	url = ../cpu-sec-bench
+[submodule "riscv-linux-sdk"]
+	path = riscv-linux-sdk
+	url = ../riscv-linux-sdk
