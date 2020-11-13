@@ -5,7 +5,13 @@ ifeq ($(ARCH), x86_64)
 run:
 	ARCH=$(ARCH) $(MAKE) -C benchmark run
 
-.PHONY: run
+dump:
+	ARCH=$(ARCH) $(MAKE) -C benchmark dump
+
+clean:
+	ARCH=$(ARCH) $(MAKE) -C benchmark clean
+
+.PHONY: run dump clean
 endif
 
 ifeq ($(ARCH), riscv64)
@@ -28,6 +34,12 @@ deploy:
 run:
 	$(MAKE) -C riscv-linux-sdk -j8 sim
 
-.PHONY: deploy run
+dump:
+	ARCH=$(ARCH) $(MAKE) -C benchmark dump
+
+clean:
+	ARCH=$(ARCH) $(MAKE) -C benchmark clean
+
+.PHONY: deploy run dump clean
 
 endif
