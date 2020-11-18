@@ -35,10 +35,10 @@ run:
 	$(MAKE) -C riscv-linux-sdk -j8 sim
 
 dump:
-	ARCH=$(ARCH) $(MAKE) -C benchmark dump
+	ARCH=$(ARCH) RISCV=$(RISCV) $(MAKE) -C benchmark dump
 
 clean:
-	ARCH=$(ARCH) $(MAKE) -C benchmark clean
+	ARCH=$(ARCH) RISCV=$(RISCV) $(MAKE) -C benchmark clean
 
 .PHONY: deploy run dump clean
 
