@@ -17,11 +17,13 @@ endif
 ifeq ($(ARCH), riscv64)
 
 DEPLOY_HOME = ./riscv-linux-sdk/work/buildroot_initramfs_sysroot
-RISCV = ../riscv-linux-sdk/toolchain
+RISCV       = ../riscv-linux-sdk/toolchain
+CXX         = $(RISCV)/bin/riscv64-unknown-linux-gnu-g++
+OBJDUMP     = $(RISCV)/bin/riscv64-unknown-linux-gnu-objdump
 
 deploy:
 	$(MAKE) -C riscv-linux-sdk -j8 toolchain/bin/riscv64-unknown-linux-gnu-g++
-	ARCH=$(ARCH) RISCV=$(RISCV) $(MAKE) -C benchmark -j8
+	ARCH=$(ARCH) CXX=$(CXX) OBJDUMP=$(OBJDUMP) $(MAKE) -C benchmark -j8
 	rm -r $(DEPLOY_HOME)
 	$(MAKE) -C riscv-linux-sdk -j8 buildroot_initramfs_sysroot
 	mkdir -p $(DEPLOY_HOME)/root/cpu-sec-bench
@@ -35,10 +37,10 @@ run:
 	$(MAKE) -C riscv-linux-sdk -j8 sim
 
 dump:
-	ARCH=$(ARCH) RISCV=$(RISCV) $(MAKE) -C benchmark dump
+	ARCH=$(ARCH) CXX=$(CXX) OBJDUMP=$(OBJDUMP) $(MAKE) -C benchmark dump
 
 clean:
-	ARCH=$(ARCH) RISCV=$(RISCV) $(MAKE) -C benchmark clean
+	ARCH=$(ARCH) $(MAKE) -C benchmark clean
 
 .PHONY: deploy run dump clean
 
