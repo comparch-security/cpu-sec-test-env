@@ -3,4 +3,4 @@
 	url = ../cpu-sec-bench
 [submodule "riscv-linux-sdk"]
 	path = riscv-linux-sdk
-	url = ../riscv-linux-sdk
+	url = ../spike-sdk-spec2017
