@@ -1,0 +1,6 @@
+# Generated state: lane builds and stamped results are disposable.
+build/
+results/
+# Machine-local plans, reports, verification scripts.
+tmp/
+*.log
