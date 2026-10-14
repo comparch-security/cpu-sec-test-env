@@ -1,0 +1,32 @@
+# Kernel config fragment for the riscv64 system lane's qemu-virt guest.
+# Merged through the kernel tree's scripts/config by build_kernel.sh after
+# defconfig, then olddefconfig.  Only CONFIG_X=y lines are supported by the
+# merge loop.  Every symbol here is asserted against the BUILT .config by
+# build_kernel.sh and re-asserted by the step-4 verification.
+#
+# The guest depends on:
+#   - serial 8250 console (console=ttyS0 + earlycon on the qemu-virt UART);
+#   - devtmpfs with automount (device nodes without mdev);
+#   - initramfs/cpio support (the lane boots an initrd, not a block rootfs);
+#   - virtio-mmio (the qemu-virt transport used by the 9p device);
+#   - PCI host-generic (the virt machine's ECAM root);
+#   - net/9p + virtio transport + 9p filesystem (the results share);
+#   - RISC-V userspace vector: the apt cross glibc's RVA23U64 code (static
+#     busybox's memcpy included) executes vector instructions, and the second
+#     symbol is load-bearing - it is what makes riscv_v_default_allow default
+#     to allow (glibc never issues the V prctl itself).
+CONFIG_RISCV_ISA_V=y
+CONFIG_RISCV_ISA_V_DEFAULT_ENABLE=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_MMIO=y
+CONFIG_PCI=y
+CONFIG_PCI_HOST_GENERIC=y
+CONFIG_NET=y
+CONFIG_NET_9P=y
+CONFIG_NET_9P_VIRTIO=y
+CONFIG_9P_FS=y

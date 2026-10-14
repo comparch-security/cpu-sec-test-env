@@ -1,0 +1,77 @@
+#!/bin/sh
+# Guest init (PID 1, busybox ash) for the riscv64 system lane.
+#
+# Staged as /init in the initramfs by scripts/riscv64/build_image.sh.  It:
+#   - mounts proc/sys/dev, then the host's virtio-9p results share (fail
+#     loudly: a share that cannot be mounted means no results can escape);
+#   - writes the guest-truth test/sys_info.txt (guest uname -a + cpuinfo +
+#     the pin/dpkg lines of the staged versions.host.txt, never its
+#     host-uname line) so results.dat records the guest venue, not the host;
+#   - runs ./run-test no-make exhausted-run from /bench (the corpus is
+#     prebuilt; the scheduler must not try to make in the guest);
+#   - copies results.json/results.dat/variables.json to the share, syncs
+#     twice, writes guest-status.txt, and poweroffs.
+# The EXIT trap guarantees the sync, the status marker and the poweroff even
+# when an earlier step fails; the host treats a missing/empty
+# guest-status.txt as a failed lane.
+
+set -e
+
+SHARE_TAG=host0
+SHARE_MNT=/host
+BENCH=/bench
+
+cleanup() {
+  # Runs on every exit path, including set -e aborts.  Best-effort: never
+  # block the poweroff on a failing copy.
+  set +e
+  sync
+  sync
+  if [ -d "$SHARE_MNT" ]; then
+    {
+      echo "guest: cpu-sec-test-env riscv64 lane"
+      echo "kernel: $(uname -r)"
+      echo "run-test-exit: ${RUN_RC:-not-started}"
+    } > "$SHARE_MNT/guest-status.txt" 2>/dev/null
+    sync
+  fi
+  poweroff -f
+}
+trap cleanup EXIT
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+
+mkdir -p "$SHARE_MNT" "$BENCH/test"
+mount -t 9p -o trans=virtio,version=9p2000.L,cache=none "$SHARE_TAG" "$SHARE_MNT" || {
+  echo "init: FATAL: cannot mount 9p share '$SHARE_TAG' on $SHARE_MNT - no results can escape the guest" >&2
+  exit 1
+}
+
+# Guest-truth provenance: the guest's own kernel and cpu, plus the host-side
+# pin/dpkg lines (env.sh pins and cross-toolchain package versions) from the
+# staged versions.host.txt - with its host-uname line dropped, since the
+# guest records its own kernel, never the host's.
+{
+  echo "lane: riscv64 (system, qemu-system-riscv64 virt)"
+  echo "System: $(uname -a)"
+  echo "CPU:"
+  cat /proc/cpuinfo
+  echo "Pins and host packages (versions.host.txt, host-uname dropped):"
+  grep -v '^host-uname:' "$BENCH/versions.host.txt"
+} > "$BENCH/test/sys_info.txt"
+
+cd "$BENCH"
+set +e
+./run-test no-make exhausted-run
+RUN_RC=$?
+set -e
+
+cp "$BENCH/results.json" "$BENCH/results.dat" "$BENCH/variables.json" \
+   "$SHARE_MNT/" 2>/dev/null || true
+sync
+sync
+
+exit 0
+# cleanup trap: sync, guest-status.txt, poweroff -f

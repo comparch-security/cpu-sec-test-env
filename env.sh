@@ -23,16 +23,26 @@ AARCH64_SYSROOT=/usr/aarch64-linux-gnu
 QEMU_VERSION=10.2.1
 QEMU_SYSTEM_RISCV64=qemu-system-riscv64
 QEMU_AARCH64=qemu-aarch64
-QEMU_CPU_RISCV64=rv64
+# rva23s64: qemu 10.2.1's named RVA23 Linux-capable hart profile.  Ubuntu's
+# riscv64 cross glibc is built to the RVA23U64 profile (crt1.o/libc.so.6 carry
+# that Tag_RISCV_arch and the linker unions input tags), so every executable
+# this toolchain links declares RVA23U64 - a narrower model (rv64) is a latent
+# illegal-instruction in the guest's own libc.  rva23u64 is the whitelisted
+# fallback if the guest kernel mishandles an S-mode extension of rva23s64.
+QEMU_CPU_RISCV64=rva23s64
 QEMU_CPU_AARCH64_MTE=max,mte=on
 QEMU_BIOS_RISCV64=default
 QEMU_MACH_RISCV64=virt
 QEMU_MEM_RISCV64=256
 
 # ---- kernel pin (guest kernel for the riscv64 system lane) ----
-KERNEL_VERSION=6.1.83
-KERNEL_URL=https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.83.tar.xz
-KERNEL_SHA256=88b69611093613ce4494527685f833af0c31b986dcbeda7086f69f18f9e0b190
+# 6.18 LTS: the apt cross glibc is RVA23U64 machine code whose memcpy executes
+# vector instructions, so the guest kernel must support userspace vector
+# (landed in 6.5; 6.1.83 has no CONFIG_RISCV_ISA_V at all) and default it on
+# (the fragment forces RISCV_ISA_V + RISCV_ISA_V_DEFAULT_ENABLE).
+KERNEL_VERSION=6.18.56
+KERNEL_URL=https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.56.tar.xz
+KERNEL_SHA256=4633bbda2ab95eaf2a7af4041236451d6759c72e6946265531af4b3aacefbf89
 
 # ---- busybox pin (static guest userspace) ----
 BUSYBOX_VERSION=1.36.1
