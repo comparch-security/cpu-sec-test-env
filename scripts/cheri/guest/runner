@@ -1,0 +1,146 @@
+#!/bin/sh
+# Guest runner for the two CHERI lanes (plan 2026-10-14-cheri-lanes-bringup,
+# Step 7).  Runs inside the CheriBSD purecap guest, moves the staged payload
+# across the lane's I/O mechanism, executes it and publishes the handshake
+# the host's run.sh greps (same contract as scripts/riscv64/guest/init:
+# guest-status.txt carrying "run-test-exit: <code>"; a missing/empty file
+# is a failed lane, and the host never parses console output).
+#
+# Per-mechanism state - who triggers this script and whether it must be
+# baked into the image:
+#   1. virtio-9p winner: the host boot adds the corpus-in (read-only) and
+#      results-out (writable) shares; the runner itself RIDES the corpus-in
+#      share (the host copies it there before boot), so delivery is per-run.
+#      Trigger: one line fed on the serial console (`sh <mnt>/runner`);
+#      the console is write-only from the host's point of view (the
+#      handshake travels on the results-out share).  Bake: NOTHING.
+#   2. SSH winner: the host scp's this script and the payload in and runs
+#      it over ssh; results travel back over the same channel (or a
+#      results-out share if one is also mounted).  Trigger: the ssh
+#      command line.  Bake: NOTHING.
+#   3. extra-files candidate: content baked at image-build time; a per-run
+#      channel is STILL required for results and for whatever Step 10's
+#      confirmatory loop rewrites (the derived registry/payload), because
+#      baked content cannot change between runs.  Trigger: rc or console.
+#      Bake: only the parts recorded in the spike verdict; see
+#      build/cheri/versions-spike.txt.
+#
+# Env knobs (all optional, all unset by default):
+#   CORPUS_IN_TAG      mount tag of the read-only corpus-in virtio-9p share
+#   CORPUS_IN_MNT      default /tmp/corpus-in
+#   RESULTS_OUT_TAG    mount tag of the writable results-out virtio-9p share
+#   RESULTS_OUT_MNT    default /tmp/results-out
+#   BENCH_DIR          staged payload dir; must contain run-test (default
+#                      /tmp/bench).  Absent run-test is not fatal: the run
+#                      records "not-staged" so share mechanics stay testable
+#                      before Step 8 stages the payload.
+#   RUN_TEST_ARGS      default "no-make exhausted-run" (the corpus is
+#                      prebuilt in-host; the guest must never make)
+#   RUNNER_POWEROFF    =1 -> shutdown -p now after the handshake is written
+
+set -eu
+
+CORPUS_IN_MNT=${CORPUS_IN_MNT:-/tmp/corpus-in}
+RESULTS_OUT_MNT=${RESULTS_OUT_MNT:-/tmp/results-out}
+BENCH_DIR=${BENCH_DIR:-/tmp/bench}
+RUN_TEST_ARGS=${RUN_TEST_ARGS:-no-make exhausted-run}
+RUNNER_POWEROFF=${RUNNER_POWEROFF:-0}
+RUN_RC=not-started
+
+# Best-effort on every exit path (including set -e aborts): never block the
+# status write or the poweroff on a failing copy.
+cleanup() {
+  set +e
+  sync
+  if [ -n "${RESULTS_OUT_TAG:-}" ] && [ -d "$RESULTS_OUT_MNT" ]; then
+    {
+      echo "guest: cpu-sec-test-env cheri lane"
+      echo "kernel: $(uname -r)"
+      echo "run-test-exit: ${RUN_RC:-not-started}"
+    } > "$RESULTS_OUT_MNT/guest-status.txt" 2>/dev/null
+    sync
+    sync
+  else
+    echo "runner: no results-out share mounted - guest-status.txt not published" >&2
+  fi
+  if [ "$RUNNER_POWEROFF" = 1 ]; then
+    shutdown -p now
+  fi
+}
+trap cleanup EXIT
+
+# p9fs ships as two modules (sys/modules/p9fs, sys/modules/virtio/p9fs) with
+# no inter-module dependency line, so load both explicitly when a share is
+# requested.
+#
+# Neither signal used to arm a load is a safe GATE here:
+#   * `kldload` of an ALREADY-LOADED module FAILS ("module already loaded or
+#     in kernel"), and a failing LAST member of an AND-OR list is fatal under
+#     `set -e` - which is how the old `kldstat -q -m X || kldload X` guard
+#     aborted the whole runner inside this function (observed on riscv64);
+#   * `kldstat -q -m <name>` UNDER-REPORTS on these images - it did not see an
+#     already-loaded virtio_p9fs, which is what armed that kldload.
+# So: load both best-effort, then assert the OUTCOME.  A module is fine if we
+# just loaded it OR if it is already present - "already loaded" is success,
+# never an abort.  The probe that does see them is `kldstat` full listing
+# (`kldstat -q -m <name>` under-reports, so it is not used here).
+ensure_p9fs() {
+  for _mod in p9fs virtio_p9fs; do
+    if kldload "$_mod" >/dev/null 2>&1; then
+      continue                                            # loaded by us
+    fi
+    if kldstat 2>/dev/null | grep -q "[[:space:]]${_mod}\.ko"; then
+      continue                                            # already present
+    fi
+    echo "runner: $_mod unavailable (load failed and it is not present)" >&2
+    return 1
+  done
+  return 0
+}
+
+mount_share() {
+  # $1 = mount tag, $2 = mount point, $3 = extra options (may be empty)
+  mkdir -p "$2"
+  if mount | grep -qF " on $2 "; then
+    return 0
+  fi
+  if [ -n "$3" ]; then
+    mount -t p9fs -o "$3" "$1" "$2"
+  else
+    mount -t p9fs "$1" "$2"
+  fi
+}
+
+if [ -n "${CORPUS_IN_TAG:-}" ] || [ -n "${RESULTS_OUT_TAG:-}" ]; then
+  ensure_p9fs
+fi
+if [ -n "${CORPUS_IN_TAG:-}" ]; then
+  # corpus-in is read-only by doctrine: the guest must not write the host's
+  # corpus tree (security_model=mapped-xattr keeps guest content in xattrs).
+  mount_share "$CORPUS_IN_TAG" "$CORPUS_IN_MNT" ro
+fi
+if [ -n "${RESULTS_OUT_TAG:-}" ]; then
+  mount_share "$RESULTS_OUT_TAG" "$RESULTS_OUT_MNT" ""
+fi
+
+if [ -x "$BENCH_DIR/run-test" ]; then
+  cd "$BENCH_DIR"
+  set +e
+  # shellcheck disable=SC2086
+  ./run-test $RUN_TEST_ARGS
+  RUN_RC=$?
+  set -e
+  if [ -n "${RESULTS_OUT_TAG:-}" ] && [ -d "$RESULTS_OUT_MNT" ]; then
+    for f in results.json results.dat variables.json; do
+      [ -f "$BENCH_DIR/$f" ] && cp -f "$BENCH_DIR/$f" "$RESULTS_OUT_MNT/"
+    done
+    sync
+  fi
+else
+  RUN_RC=not-staged
+  echo "runner: $BENCH_DIR/run-test not present - payload not staged yet" >&2
+fi
+
+exit 0
+# cleanup trap: sync, guest-status.txt on the results-out share, optional
+# poweroff

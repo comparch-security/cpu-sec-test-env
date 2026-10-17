@@ -4,8 +4,9 @@
 #
 # Lanes: x86_64 | aarch64 (variants selected with the enable_aarch64_* flags,
 # whose results land in results/aarch64-<variant>/) | riscv64 (booted Linux
-# under qemu-system-riscv64) | cheri_riscv64 and aarch64-morello (probe-only
-# until the deferred CHERI bring-up lands).
+# under qemu-system-riscv64) | cheri_riscv64 and aarch64-morello (CheriBSD
+# purecap guests booted under the CHERI/Morello qemu, corpus delivered over
+# virtio-9p - real lanes since the CHERI bring-up landed).
 #
 # All pins, URLs, timeouts and roots live in env.sh - this Makefile only reads
 # the few values its own recipes need.  One lane runs at a time: every entry
@@ -38,6 +39,15 @@ AARCH64_AS := $(shell . ./env.sh && echo $$AARCH64_AS)
 AARCH64_OBJDUMP := $(shell . ./env.sh && echo $$AARCH64_OBJDUMP)
 AARCH64_TRIPLE := $(patsubst %-objdump,%,$(AARCH64_OBJDUMP))
 
+# CHERI lane values the deploy recipe's hash-aware legs need.
+QEMU_RISCV64XCHERI := $(shell . ./env.sh && echo $$QEMU_RISCV64XCHERI)
+QEMU_MORELLO := $(shell . ./env.sh && echo $$QEMU_MORELLO)
+CHERI_DISK_IMAGE_RISCV64 := $(shell . ./env.sh && echo $$CHERI_DISK_IMAGE_RISCV64)
+CHERI_DISK_IMAGE_RISCV64_SHA256 := $(shell . ./env.sh && echo $$CHERI_DISK_IMAGE_RISCV64_SHA256)
+CHERI_DISK_IMAGE_MORELLO := $(shell . ./env.sh && echo $$CHERI_DISK_IMAGE_MORELLO)
+CHERI_DISK_IMAGE_MORELLO_SHA256 := $(shell . ./env.sh && echo $$CHERI_DISK_IMAGE_MORELLO_SHA256)
+CHERI_BUILD_TIMEOUT := $(shell . ./env.sh && echo $$CHERI_BUILD_TIMEOUT)
+
 # An empty timeout would make coreutils `timeout` fail at the wrong moment.
 ifeq ($(strip $(LANE_RUN_TIMEOUT)),)
 $(error env.sh did not yield LANE_RUN_TIMEOUT - refusing timeout with an empty interval)
@@ -50,6 +60,9 @@ $(error env.sh did not yield BUILD_DIR)
 endif
 ifeq ($(strip $(RESULTS_DIR)),)
 $(error env.sh did not yield RESULTS_DIR)
+endif
+ifeq ($(strip $(CHERI_BUILD_TIMEOUT)),)
+$(error env.sh did not yield CHERI_BUILD_TIMEOUT - refusing timeout with an empty interval)
 endif
 
 # aarch64 variant flags: enable_aarch64_{pa,bti,mte}=yes translates to
@@ -201,13 +214,26 @@ dump:
 
 else ifeq ($(ARCH),cheri_riscv64)
 
+# deploy: sources-if-missing -> emulator-if-missing -> image-if-missing-and-
+# hash-mismatched -> prepare.  The timeout layering is deliberate: only the
+# cheap legs (sources, prepare) carry LANE_DEPLOY_TIMEOUT; the emulator and
+# image legs carry the CHERI_BUILD_TIMEOUT, because a 7200 s outer cap would
+# fire mid-world-build (exit 124) and make the inner bound dead.  The image leg
+# is hash-aware, not existence-aware, so a stale pinned image is rebuilt.
 deploy:
-	@echo "CHERI lane not provisioned - see README (deferred issue: cheri-lanes-bringup-deferred)" >&2
-	exit 1
+	@set -e
+	if [ ! -d $(BUILD_DIR)/cheri/sources/qemu ]; then \
+	  timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/cheri/stage_sources.sh; fi
+	if [ ! -x $(BUILD_DIR)/cheri/output/sdk/bin/$(QEMU_RISCV64XCHERI) ]; then \
+	  timeout $(CHERI_BUILD_TIMEOUT) bash scripts/cheri/build_emulator.sh; fi
+	if [ ! -f $(CHERI_DISK_IMAGE_RISCV64) ] || \
+	   [ "$$(sha256sum $(CHERI_DISK_IMAGE_RISCV64) | cut -d' ' -f1)" != "$(CHERI_DISK_IMAGE_RISCV64_SHA256)" ]; then \
+	  timeout $(CHERI_BUILD_TIMEOUT) bash scripts/cheri/build_image.sh; fi
+	timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/cheri_riscv64/prepare.sh cheri_riscv64 enable_riscv64_cheri=yes
 
 run:
-	@echo "CHERI lane not provisioned - see README (deferred issue: cheri-lanes-bringup-deferred)" >&2
-	exit 1
+	@set -e
+	LANE_RUN_TIMEOUT=$(LANE_RUN_TIMEOUT) bash scripts/cheri_riscv64/run.sh cheri_riscv64
 
 clean:
 	@set -e
@@ -216,20 +242,31 @@ clean:
 	rm -rf $(BUILD_DIR)/cheri_riscv64
 
 dump:
-	@echo "CHERI lane not provisioned - see README (deferred issue: cheri-lanes-bringup-deferred)" >&2
+	@echo "cheri_riscv64 dump is unsupported: the binaries live inside the guest image" >&2
 	exit 1
 
 .PHONY: deploy run clean dump
 
 else ifeq ($(ARCH),aarch64-morello)
 
+# Same deploy shape as cheri_riscv64 (both CHERI lanes share the emulator and
+# the image build); the Morello boot uses its own emulator binary and pinned
+# disk image.  The bench token is aarch64, so its enable flag is
+# enable_aarch64_morello=yes.
 deploy:
-	@echo "CHERI lane not provisioned - see README (deferred issue: cheri-lanes-bringup-deferred)" >&2
-	exit 1
+	@set -e
+	if [ ! -d $(BUILD_DIR)/cheri/sources/qemu ]; then \
+	  timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/cheri/stage_sources.sh; fi
+	if [ ! -x $(BUILD_DIR)/cheri/output/sdk/bin/$(QEMU_MORELLO) ]; then \
+	  timeout $(CHERI_BUILD_TIMEOUT) bash scripts/cheri/build_emulator.sh; fi
+	if [ ! -f $(CHERI_DISK_IMAGE_MORELLO) ] || \
+	   [ "$$(sha256sum $(CHERI_DISK_IMAGE_MORELLO) | cut -d' ' -f1)" != "$(CHERI_DISK_IMAGE_MORELLO_SHA256)" ]; then \
+	  timeout $(CHERI_BUILD_TIMEOUT) bash scripts/cheri/build_image.sh; fi
+	timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/morello/prepare.sh aarch64-morello enable_aarch64_morello=yes
 
 run:
-	@echo "CHERI lane not provisioned - see README (deferred issue: cheri-lanes-bringup-deferred)" >&2
-	exit 1
+	@set -e
+	LANE_RUN_TIMEOUT=$(LANE_RUN_TIMEOUT) bash scripts/morello/run.sh aarch64-morello
 
 clean:
 	@set -e
@@ -238,7 +275,7 @@ clean:
 	rm -rf $(BUILD_DIR)/aarch64-morello
 
 dump:
-	@echo "CHERI lane not provisioned - see README (deferred issue: cheri-lanes-bringup-deferred)" >&2
+	@echo "aarch64-morello dump is unsupported: the binaries live inside the guest image" >&2
 	exit 1
 
 .PHONY: deploy run clean dump

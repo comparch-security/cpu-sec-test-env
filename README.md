@@ -10,8 +10,11 @@ on every supported architecture from a single repository:
   memory-tagging (`mte`).
 - **riscv64** — host-built corpus booted inside a Linux 6.18.56 guest under
   `qemu-system-riscv64` (`-M virt`), results extracted over a virtio-9p share.
-- **CHERI** — dialect probes (`cheri_riscv64`, `aarch64-morello`) against
-  CHERI-LLVM / Morello-LLVM; full bring-up is deferred (see *Known caveats*).
+- **CHERI** — two real lanes, `cheri_riscv64` and `aarch64-morello`: purecap
+  CheriBSD 15.0-CURRENT guests under CHERI-LLVM's `qemu-system-riscv64xcheri`
+  and `qemu-system-morello`, booted from pinned disk images with the corpus
+  handed in over a read-only virtio-9p share and results collected from a
+  writable one. Two bring-up workarounds are in force (see *Known caveats*).
 
 The benchmark itself lives in the `benchmark/` git submodule
 (`comparch-security/cpu-sec-bench`), consumed read-only at the commit pinned in
@@ -38,6 +41,26 @@ sudo apt install qemu-system-riscv qemu-system-data qemu-user qemu-user-binfmt \
   aarch64 corpus; `libhwasan0-arm64-cross` supplies the MTE lane's
   `-fsanitize=hwaddress` runtime.
 
+The CHERI lanes additionally build their two emulators and their guests with the
+pinned `cheribuild`, which needs five more host packages:
+
+```bash
+sudo apt install libarchive-dev libarchive-tools libpixman-1-dev \
+                 libslirp-dev libcap-ng-dev
+```
+
+- `libarchive-dev` — every CheriBSD build (`pkg-config libarchive`).
+- `libarchive-tools` — supplies `bsdtar` for the sysroot packaging step.
+- `libpixman-1-dev`, `libslirp-dev`, `libcap-ng-dev` — the pinned QEMU build's
+  system-emulation dependencies (the 9pfs block needs `libcap-ng`).
+
+Two CheriBSD-build quirks are handled *in the repository*, so no host change is
+needed: `scripts/cheri/glibc-c23-shim/` is injected as `CPATH` to neutralise
+this host's glibc-2.43 C23 `strchr` macro during the world build (self-scoping —
+CPATH is searched after every `-I`), and the build script unsets
+`SOURCE_DATE_EPOCH` for the cheribuild invocation because BSD `newvers.sh`
+validates it with `date -r <epoch>`, which GNU `date` misreads as a filename.
+
 Also required: the bench pin (`env.sh` `BENCH_COMMIT`) must exist on the public
 `comparch-security/cpu-sec-bench` remote — a clean submodule checkout resolves
 exactly that commit, and the lanes depend on the machinery it carries.
@@ -58,12 +81,19 @@ make ARCH=<lane> [enable_aarch64_<pa|bti|mte>=yes] <deploy|run|clean|dump>
 | `make ARCH=aarch64 enable_aarch64_pa=yes run` | Pointer-auth variant (same for `bti`, `mte`; one variant at a time) |
 | `make ARCH=riscv64 deploy` | Builds kernel + busybox + rootfs image + corpus (`build/riscv64/`) |
 | `make ARCH=riscv64 run` | Boots the image, runs the corpus in the guest, extracts results |
+| `make ARCH=cheri_riscv64 deploy` | Builds the CHERI riscv64 emulator, the CheriBSD disk image and the corpus (a cold `deploy` is a world build — hours) |
+| `make ARCH=cheri_riscv64 run` | Boots the pinned image under `qemu-system-riscv64xcheri`, runs the corpus in the guest, collects results in `results/cheri_riscv64/<stamp>/` |
+| `make ARCH=aarch64-morello deploy` / `run` | The Morello lane (`qemu-system-morello`, UEFI + `loader(8)`); results in `results/aarch64-morello/<stamp>/` |
 | `make ARCH=<lane> clean` | Removes that lane's build tree and the bench's generated files |
 | `make ARCH=x86_64 dump` | The bench's own dump target (riscv64 has no dump: binaries live inside the guest image) |
 
 `ARCH` defaults to the host architecture. `deploy` is implicit for the host
-lanes — `run` does everything. For the riscv64 lane, run `deploy` first, then
-`run` (each is wrapped in its own `timeout`).
+lanes — `run` does everything. For the riscv64 and CHERI lanes, run `deploy`
+first, then `run` (each is wrapped in its own `timeout`). The CHERI lanes'
+`deploy` splits its timeouts deliberately: the cheap legs (source staging,
+`prepare.sh`) carry `LANE_DEPLOY_TIMEOUT`, while the emulator and image builds
+carry `CHERI_BUILD_TIMEOUT` (86400 s) — an outer `LANE_DEPLOY_TIMEOUT` would
+fire in the middle of a world build and make the inner bound dead.
 
 **One lane at a time.** The bench tree is a single mutable workdir: every
 lane entry point takes an advisory lock on `build/.lane.lock` and a second
@@ -83,6 +113,12 @@ results/<lane>/<UTC-stamp>/ results.json  results.dat  versions.txt
                             (+ variables.json on x86_64 and riscv64;
                              + boot.log and guest-status.txt on riscv64)
 results/cheri/probe-<date>.json   CHERI dialect probe evidence
+build/cheri/                CHERI lane build root (sources, SDK, emulators,
+                            pinned disk images, versions-spike.txt)
+results/cheri_riscv64/<UTC-stamp>/   results.json  results.dat  versions.txt
+results/aarch64-morello/<UTC-stamp>/     + guest-status.txt  variables.json (both lanes)
+                                     the full guest console transcript is
+                                     build/<lane>/console.log, outside results/
 ```
 
 `versions.txt` is the host-provenance record: the env.sh pins, the dpkg versions
@@ -108,8 +144,13 @@ All pins live in `env.sh` only — no script hard-codes them.
 | guest kernel | Linux 6.18.56 (kernel.org tarball, sha256-verified) |
 | busybox | 1.36.1 (static, sha256-verified) |
 | cheribuild | `db2f0360381e5fa2d50379e92ad119bb98db25c4` |
-| reproducibility | `KBUILD_BUILD_TIMESTAMP/USER/HOST`, `SOURCE_DATE_EPOCH` |
-| timeouts | lane run 3600 s, lane deploy 7200 s |
+| CHERI QEMU | `CHERI-Alliance/qemu` @ `32bf55e2965dcdcfb0139d209e7a7b9dd1314583` — targets `riscv64xcheri-softmmu,morello-softmmu` (QEMU 7.2.0) |
+| CheriBSD | `CTSRD-CHERI/cheribsd` (commit pinned in `env.sh`) — purecap `riscv64` and `morello` disk images, each sha256-pinned |
+| CHERI boot firmware | riscv64: `CTSRD-CHERI/riscv-pk` @ `0cb596cf6e49c0014256300b614c5cd30cb90d57` → `bbl-riscv64cheri-virt-fw_jump.bin`; Morello: `edk2-aarch64-code.fd` |
+| CHERI CPU pins | riscv64 `rv64,sstc=off` (Sstc workaround — the pinned riscv-pk firmware never sets `menvcfg.STCE`); Morello `morello`, `virt,gic-version=3` |
+| CHERI sysroots | `CHERI_SYSROOT_RISCV64`, `CHERI_SYSROOT_MORELLO` — purecap, under two different SDK roots |
+| reproducibility | `KBUILD_BUILD_TIMESTAMP/USER/HOST`, `SOURCE_DATE_EPOCH` (unset for the CheriBSD legs) |
+| timeouts | lane run 3600 s, lane deploy 7200 s; CHERI emulator/image legs 86400 s (`CHERI_BUILD_TIMEOUT`) |
 
 The riscv64 image is byte-reproducible: the kernel/busybox builds carry the
 identity pins above, the rootfs staging normalizes mtimes and sorts entries with
@@ -123,9 +164,11 @@ verify their sha256 before use.
 The corpus consists of deliberately-attacking binaries built from the pinned
 bench: trusted code from a trusted source, but **adversarial by design**. The
 host-run lanes (x86_64, aarch64) execute them **unsandboxed with the invoking
-user's privileges — deliberately, and only on this workstation**; the riscv64
-lane's isolation is its disposable qemu VM. Do not repoint a host lane at an
-untrusted registry or corpus without adding isolation first.
+user's privileges — deliberately, and only on this workstation**; the
+virtual-machine lanes (riscv64, cheri_riscv64, aarch64-morello) are isolated by
+their disposable qemu guests, each booted `-snapshot` from its pinned image.
+Do not repoint a host lane at an untrusted registry or corpus without adding
+isolation first.
 
 ## Known caveats
 
@@ -137,11 +180,24 @@ untrusted registry or corpus without adding isolation first.
   lane's derived registry declares them `skip` with a reason, so the accounting
   is honest: **244 run + 2 skipped**. On the host-run lanes the same two records
   are recorded as build failures (the bench's documented bring-up behaviour).
-- **The CHERI lanes are probe-only.** `scripts/cheri/dialect_probe.sh` records
-  whether each dialect assembles (raw commands, exit codes, stderr) into
-  `results/cheri/probe-<date>.json`; `make ARCH=cheri_riscv64|aarch64-morello
-  deploy|run` prints "not provisioned" and exits non-zero until the deferred
-  emulator/guest bring-up lands (deferral `cheri-lanes-bringup-deferred`).
+- **The CHERI lanes are bring-up lanes, with two bench-side workarounds in
+  force.** Both boot their pins and run the corpus end-to-end over virtio-9p.
+  For this bring-up the corpus is built with `disable_independent_assembly=yes`,
+  and `build_corpus.sh --bring-up` records unbuilt units and missing side files
+  in the corpus manifest instead of aborting (strict mode remains the
+  acceptance gate; the bench submodule itself is unchanged). Any per-record
+  skips are declared in that lane's derived registry with a reason and the
+  tester's classification. Reaching the no-workaround acceptance — the full
+  `indepassembly` corpus under strict mode — is the successor sweep's first
+  item. `scripts/cheri/dialect_probe.sh` remains available and still records
+  the raw dialect probe into `results/cheri/probe-<date>.json`.
+- **The two CHERI lanes do not boot the same way, on purpose.** riscv64 loads
+  `bbl-riscv64cheri-virt-fw_jump.bin` into M-mode and jumps to an external
+  `-kernel` (the firmware, the kernel and the `rv64,sstc=off` CPU pin are all
+  load-bearing — without the pin the guest panics at clock init); Morello is
+  UEFI (`edk2-aarch64-code.fd`) and `loader(8)` reads the kernel from the disk
+  image — it takes **no** `-kernel`. Do not "simplify" riscv64 to a disk-only
+  boot: that path has no transition that can succeed.
 - **The riscv64 CPU model is an RVA23 profile, not `rv64`.** The apt cross
   toolchain's glibc is built to the **RVA23U64** profile: its `crt1.o` and
   `libc.so.6` carry that `Tag_RISCV_arch`, and the linker unions input tags —
