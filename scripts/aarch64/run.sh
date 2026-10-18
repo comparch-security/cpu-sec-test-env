@@ -93,7 +93,7 @@ export QEMU_LD_PREFIX="$AARCH64_SYSROOT"
 # env.sh AARCH64_CXX pin).  For the MTE lane QEMU_CPU=max,mte=on (the env.sh
 # QEMU_CPU_AARCH64_MTE pin) rides the environment through binfmt into
 # qemu-aarch64.
-mf="ARCH=$ARCH CXX=$AARCH64_CXX ASM=$AARCH64_AS OBJDUMP=$AARCH64_OBJDUMP disable_independent_assembly=yes"
+mf="ARCH=$ARCH CXX=$AARCH64_CXX ASM=$AARCH64_AS OBJDUMP=$AARCH64_OBJDUMP"
 if [ -n "$ENABLE_FLAG" ]; then
   mf="$mf $ENABLE_FLAG=yes"
 fi

@@ -14,7 +14,9 @@ on every supported architecture from a single repository:
   CheriBSD 15.0-CURRENT guests under CHERI-LLVM's `qemu-system-riscv64xcheri`
   and `qemu-system-morello`, booted from pinned disk images with the corpus
   handed in over a read-only virtio-9p share and results collected from a
-  writable one. Two bring-up workarounds are in force (see *Known caveats*).
+  writable one. Both lanes run the strict corpus; the only not-run records are
+  platform build failures declared in the lane's derived registry (see *Known
+  caveats*).
 
 The benchmark itself lives in the `benchmark/` git submodule
 (`comparch-security/cpu-sec-bench`), consumed read-only at the commit pinned in
@@ -136,7 +138,7 @@ All pins live in `env.sh` only — no script hard-codes them.
 
 | Item | Pin |
 |---|---|
-| bench commit | `c2c703979ae3db86f36709e7299740760c8c7e1d` |
+| bench commit | `33f6f84b10080888d98eed535dda8313a914d161` |
 | riscv64 toolchain | `riscv64-linux-gnu-{g++-13,gcc-13,as,objdump}` (Ubuntu gcc-13 cross 13.4.0) |
 | aarch64 toolchain / sysroot | `aarch64-linux-gnu-{g++-13,gcc-13,as,objdump}`, `/usr/aarch64-linux-gnu` |
 | QEMU | 10.2.1 (`qemu-system-riscv64`, `qemu-aarch64`) |
@@ -172,24 +174,29 @@ isolation first.
 
 ## Known caveats
 
-- **Two records are skipped on the riscv64 lane.**
-  `cfi-return-to-peer-asmfunc` and
-  `cfi-return-to-parent-non-call-site-by-asmfunc` cannot link while the bench's
-  `indepassembly.asm` still carries an untranslated x86 `assembly_return_site`
-  (bench-side deferral `indepassembly-return-site-untranslated`). The system
-  lane's derived registry declares them `skip` with a reason, so the accounting
-  is honest: **244 run + 2 skipped**. On the host-run lanes the same two records
-  are recorded as build failures (the bench's documented bring-up behaviour).
-- **The CHERI lanes are bring-up lanes, with two bench-side workarounds in
-  force.** Both boot their pins and run the corpus end-to-end over virtio-9p.
-  For this bring-up the corpus is built with `disable_independent_assembly=yes`,
-  and `build_corpus.sh --bring-up` records unbuilt units and missing side files
-  in the corpus manifest instead of aborting (strict mode remains the
-  acceptance gate; the bench submodule itself is unchanged). Any per-record
-  skips are declared in that lane's derived registry with a reason and the
-  tester's classification. Reaching the no-workaround acceptance — the full
-  `indepassembly` corpus under strict mode — is the successor sweep's first
-  item. `scripts/cheri/dialect_probe.sh` remains available and still records
+- **All 246 records run on the riscv64 lane.**
+  The independent-assembly translation (`cfi-return-to-peer-asmfunc` and
+  `cfi-return-to-parent-non-call-site-by-asmfunc`) is in the pinned bench
+  commit, so the derived registry declares no skips and the corpus stages 145
+  units. Four riscv64 verdicts lie outside the registry's `expect-results` and
+  are handoff rows, not skips: `acc-read-func` exits 1 at this pin because the
+  bench's opcode-extraction script matches the translated `assembly_helper`
+  symbol and writes an empty side file (deferral
+  `func-opcode-gen-helper-symbol-match`, fixed in the bench sweep); and
+  `cfi-jump-func-ra-from-heap-memcpy-implicit-arith` (267),
+  `cfi-return-to-parent-wrong-call-site-fakefunc` (255) and
+  `mss-write-by-stack-pointer` (1) are pre-existing bench-side expectation gaps
+  (deferral `review-lines-bench-expectation-gaps`).
+- **The CHERI lanes run the strict corpus.**
+  Both boot their pins and run the corpus end-to-end over virtio-9p. The
+  independent-assembly translation is in the pinned bench, so the corpus builds
+  under strict mode — no `disable_independent_assembly`, no `--bring-up`. The
+  remaining not-run records are CHERI-platform build failures declared in the
+  lane's derived registry with a reason (`acc-get-frame-size`,
+  `mss-write-by-stack-pointer` on `cheri_riscv64`; `cfi-call-mid-func` on
+  `aarch64-morello`). Verdicts outside the registry's `expect-results` are
+  recorded as handoff rows for the bench sweep, never skipped.
+  `scripts/cheri/dialect_probe.sh` remains available and still records
   the raw dialect probe into `results/cheri/probe-<date>.json`.
 - **The two CHERI lanes do not boot the same way, on purpose.** riscv64 loads
   `bbl-riscv64cheri-virt-fw_jump.bin` into M-mode and jumps to an external

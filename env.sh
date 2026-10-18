@@ -6,7 +6,9 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-BENCH_COMMIT=c2c703979ae3db86f36709e7299740760c8c7e1d
+# 33f6f84 carries the independent-assembly translation plus the
+# enable_riscv64_cheri ASMFLAGS/target block (bench plan 2026-10-18-cheri-asmflags).
+BENCH_COMMIT=33f6f84b10080888d98eed535dda8313a914d161
 
 # ---- cross toolchains (Ubuntu gcc-13 cross packages) ----
 RISCV64_CXX=riscv64-linux-gnu-g++-13

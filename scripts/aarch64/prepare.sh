@@ -124,7 +124,7 @@ esac
 # ---- guest-truth header (overwrites the Makefile's generic sys_info.txt) ----
 # The MAKEFLAGS composition below MUST match scripts/aarch64/run.sh exactly:
 # this is the same string the scheduler's child makes will receive.
-mf="ARCH=$ARCH CXX=$AARCH64_CXX ASM=$AARCH64_AS OBJDUMP=$AARCH64_OBJDUMP disable_independent_assembly=yes"
+mf="ARCH=$ARCH CXX=$AARCH64_CXX ASM=$AARCH64_AS OBJDUMP=$AARCH64_OBJDUMP"
 if [ -n "$ENABLE_FLAG" ]; then
   mf="$mf $ENABLE_FLAG=yes"
 fi

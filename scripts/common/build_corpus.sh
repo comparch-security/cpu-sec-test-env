@@ -10,7 +10,7 @@ set -euo pipefail
 #   OUT_DIR/test/<side>     the derived run-time side files
 #
 # Each unit is built by issuing the scheduler's own command against the
-# ORIGINAL program name - `make -B test/<prog> <K=V>... disable_... ARCH=...
+# ORIGINAL program name - `make -B test/<prog> <K=V>... ARCH=...
 # CXX=... ASM=... OBJDUMP=...` from the bench root with the objdump shim first
 # on PATH - then snapshotted to the unit's file name.  Any build failure
 # outside the manifest's expected_failures aborts non-zero naming the unit.
@@ -115,10 +115,11 @@ case "$LANE" in
       { di "CHERI-LLVM clang++ not found under $CHERI_BROOT/output/sdk/bin - run the image leg first"; exit 1; }
     SYSROOT="$ROOT/$CHERI_SYSROOT_RISCV64"
     [ -d "$SYSROOT" ] || { di "purecap sysroot pin $SYSROOT absent"; exit 1; }
-    # --target is mandatory here: the bench Makefile's enable_riscv64_cheri adds
-    # the -march/-mabi but not the triple, and the SDK clang defaults to the
-    # host.  OBJDUMP stays the host riscv64-linux-gnu-objdump (the plan's
-    # objdump-shim boundary: GNU format reads FreeBSD ELF).
+    # The pinned bench flag block carries the triple and the -march/-mabi on
+    # every path; --sysroot is env-only and is mandatory (without it
+    # #include <stdio.h> resolves against the host include root).  OBJDUMP
+    # stays the host riscv64-linux-gnu-objdump (the plan's objdump-shim
+    # boundary: GNU format reads FreeBSD ELF).
     CXX="$CLANG --target=riscv64-unknown-freebsd --sysroot=$SYSROOT"
     ASM="$CLANG"
     OBJDUMP=$RISCV64_OBJDUMP
@@ -131,9 +132,9 @@ case "$LANE" in
       { di "Morello-LLVM clang++ not found under $CHERI_BROOT/output/morello-sdk/bin - run the image leg first"; exit 1; }
     SYSROOT="$ROOT/$CHERI_SYSROOT_MORELLO"
     [ -d "$SYSROOT" ] || { di "purecap sysroot pin $SYSROOT absent"; exit 1; }
-    # --target is mandatory here too: the bench enable flag adds the Morello
-    # -march/-mabi but NOT the triple (verified 2026-10-17: without it the SDK
-    # clang++ defaults to x86_64-unknown-linux-gnu and rejects -mabi=).
+    # The pinned enable_aarch64_morello block carries the triple and the
+    # Morello -march/-mabi on every path; --sysroot is env-only and is
+    # mandatory here, same as the cheri lane above.
     CXX="$CLANG --target=aarch64-unknown-freebsd --sysroot=$SYSROOT"
     ASM="$CLANG"
     OBJDUMP=$AARCH64_OBJDUMP
@@ -206,7 +207,6 @@ for row in "${UNIT_ROWS[@]}"; do
   read -r -a make_args <<<"$kvs"
   echo "== $prog ($file)" | tee -a "$LOG"
   if make -B "test/$prog" "${make_args[@]+"${make_args[@]}"}" \
-       disable_independent_assembly=yes \
        "${ENABLE_ARG[@]+"${ENABLE_ARG[@]}"}" \
        ARCH="$ARCH" CXX="$CXX" ASM="$ASM" OBJDUMP="$OBJDUMP" \
        >>"$LOG" 2>&1; then

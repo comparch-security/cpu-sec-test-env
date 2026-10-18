@@ -6,7 +6,7 @@ set -euo pipefail
 #   1. lane advisory lock + EXIT trap (make -C benchmark clean + submodule-
 #      clean assert on every exit path - the corpus build dirties test/);
 #   2. cross-builds the corpus with build_corpus.sh (derived registry +
-#      143 staged units + 1 side file + finalized manifest);
+#      145 staged units + 1 side file + finalized manifest);
 #   3. cross-builds the scheduler (run-test) and lib/common/libcfi.so with
 #      `make -B` (GNU make does not rebuild on variable changes alone);
 #   4. asserts the pinned -cpu model is an RVA23 profile (rva23s64/rva23u64 -
@@ -79,8 +79,7 @@ SHIM_DIR="$BUILDD/shim"
 bash "$ROOT/scripts/common/shim.sh" "${RISCV64_CROSS%-}" "$SHIM_DIR"
 export PATH="$SHIM_DIR:$PATH"
 make -B -C "$ROOT/benchmark" run-test lib/common/libcfi.so \
-  ARCH="$LANE" CXX="$RISCV64_CXX" ASM="$RISCV64_AS" OBJDUMP="$RISCV64_OBJDUMP" \
-  disable_independent_assembly=yes
+  ARCH="$LANE" CXX="$RISCV64_CXX" ASM="$RISCV64_AS" OBJDUMP="$RISCV64_OBJDUMP"
 
 # ---- stage the rootfs ----
 rm -rf "$STAGE"

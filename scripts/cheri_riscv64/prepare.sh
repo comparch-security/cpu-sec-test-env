@@ -53,6 +53,20 @@ if ! flock -n 9; then
 fi
 printf '%s\n' "$LANE" > "$BUILD_DIR/.lane.lock"
 
+# ---- collect-and-clean on every exit path ----
+cleanup() {
+  rc=$?
+  set +e
+  make -C "$ROOT/benchmark" clean >/dev/null 2>&1
+  if [ -n "$(git -C "$ROOT/benchmark" status --short)" ]; then
+    echo "ERROR: benchmark submodule left dirty after clean:" >&2
+    git -C "$ROOT/benchmark" status --short >&2
+    rc=1
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+
 CHERI_BROOT="$ROOT/$BUILD_DIR/cheri"
 TOKEN=$LANE                             # bench ARCH token == env lane here
 LANE_DIR="$ROOT/$BUILD_DIR/$LANE"
@@ -93,13 +107,8 @@ case "$machine" in
 esac
 
 # ---- corpus staging (riscv64-style) into the payload dir ----
-# --bring-up: the tolerant mode.  The CHERI lanes' predicted failure class is
-# the missing derived side file (acc-read-func's opcode extraction is expected
-# to fail there), which strict mode hard-exits on; tolerant mode records it as a
-# non-built manifest entry.  The no-workaround / strict acceptance re-run is the
-# successor env follow-up's sweep (plan Step 8 / Step 10 boundary).
 bash "$ROOT/scripts/common/build_corpus.sh" "$TOKEN" "$PAYLOAD" \
-  --bring-up --env-lane "$LANE" --enable-flag "$ENABLE_FLAG"
+  --env-lane "$LANE" --enable-flag "$ENABLE_FLAG"
 
 # ---- cross-built guest scheduler + libcfi, staged for the guest ----
 # run-test and lib/common/libcfi.so link the purecap corpus; the CXX carries
@@ -108,8 +117,7 @@ make -B -C "$ROOT/benchmark" run-test lib/common/libcfi.so \
   "${ENABLE_FLAG}=yes" \
   ARCH="$TOKEN" \
   CXX="$CLANG --target=riscv64-unknown-freebsd --sysroot=$SYSROOT" \
-  ASM="$CLANG" OBJDUMP="$RISCV64_OBJDUMP" \
-  disable_independent_assembly=yes
+  ASM="$CLANG" OBJDUMP="$RISCV64_OBJDUMP"
 install -m 0755 "$ROOT/benchmark/run-test" "$PAYLOAD/run-test"
 mkdir -p "$PAYLOAD/lib/common"
 install -m 0755 "$ROOT/benchmark/lib/common/libcfi.so" "$PAYLOAD/lib/common/libcfi.so"

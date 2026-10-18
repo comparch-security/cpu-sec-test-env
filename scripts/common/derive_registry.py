@@ -12,13 +12,12 @@ Reads the tracked bench registry (benchmark/configure.json) and writes:
                       map string (sorted "K=V" pairs, comma-joined; empty map
                       hashes to 811c9dc5); programs the lane's SKIP_TABLE row
                       declares skip are marked skip with a reason (their unit
-                      files do not exist and are never staged) - the "*" row
-                      is the deferred disable_independent_assembly translation,
-                      lane rows are recorded corpus build failures.
+                      files do not exist and are never staged) - the lane rows
+                      are recorded corpus build failures.
 
   DIR/manifest.json   the manifest SKELETON: bench_commit, lane,
                       expected_failures, units[] (one entry per STAGED unit -
-                      143 on the shared lanes, fewer where a lane row removes
+                      145 on riscv64, fewer only where a lane row removes
                       programs - as {program, map, file, status:"pending"})
                       and side_files[] derived from the records' argument
                       strings (paths under test/); build_corpus.sh finalizes
@@ -34,18 +33,9 @@ import json
 import os
 import sys
 
-# The two programs whose assembly_return_site translation is deferred; their
-# records are declared skip and their units are not staged (see the bench's
-# deferred issue indepassembly-return-site-untranslated).
-EXPECTED_FAILURES = [
-    "cfi-return-to-parent-non-call-site-by-asmfunc",
-    "cfi-return-to-peer-asmfunc",
-]
-SKIP_REASON = (
-    "independent assembly not translated on this platform; build fails under "
-    "disable_independent_assembly (deferred issue "
-    "indepassembly-return-site-untranslated)"
-)
+# No program is declared an expected failure any more: the independent-assembly
+# translation is in the pinned bench commit, so every record builds and runs.
+EXPECTED_FAILURES = []
 
 # Lane tokens that equal a bench ARCH token (the skip lists and CSB_TARGET_ARCH
 # must use the same spelling the bench Makefile bakes).
@@ -53,17 +43,14 @@ VALID_LANES = {"x86_64", "aarch64", "riscv64", "cheri_riscv64"}
 
 # Deploy-time skip table, keyed by ENV lane name (the --env-lane argument;
 # defaults to --lane, so non-CHERI callers are unchanged).  A program listed
-# under a lane's key is declared skip for THAT lane only; the "*" row applies to
-# every lane.  The asmfunc deferral is a "*" row, so the riscv64 derived output
-# stays byte-identical.  The lane rows below are the tester's bucket-(a) build
-# failures (the only skip candidates; the emitted skip token is still the bench
-# token, --lane).  Evidence:
+# under a lane's key is declared skip for THAT lane only.  These rows are the
+# tester's bucket-(a) CHERI build failures - platform facts, not a workaround
+# (the emitted skip token is still the bench token, --lane).  Evidence:
 # tmp/verification/2026-10-14-cheri-lanes-bringup-classification.json.
 CLASSIFICATION_ARTIFACT = (
     "tmp/verification/2026-10-14-cheri-lanes-bringup-classification.json"
 )
 SKIP_TABLE = {
-    "*": {p: SKIP_REASON for p in EXPECTED_FAILURES},
     "cheri_riscv64": {
         "acc-get-frame-size": (
             "corpus unit fails to build on cheri_riscv64 (GET_SP_LOC undeclared "
@@ -89,10 +76,9 @@ SKIP_TABLE = {
 
 def skip_reason(env_lane, prog):
     """The skip-reason for `prog` under the ENV lane, or None."""
-    for key in (env_lane, "*"):
-        row = SKIP_TABLE.get(key)
-        if row and prog in row:
-            return row[prog]
+    row = SKIP_TABLE.get(env_lane)
+    if row and prog in row:
+        return row[prog]
     return None
 
 FNV_OFFSET = 0x811C9DC5
