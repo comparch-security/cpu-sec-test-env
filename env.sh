@@ -6,9 +6,12 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-# c8c6000 carries the sweep: the continue fix, warning cleanup, catalog
-# hardening, the opcode-extraction fix, five .asm .size directives, registry diff.
-BENCH_COMMIT=c8c600066f4a1d0845d893bbfa24e46445e59b2b
+# 74195c4 carries the opcode-extraction platform fix: the cheri_riscv64
+# extractor branch, the $(OBJDUMP) pass-through, the extractor hardening and
+# the acc/read-func.cpp parse check (on top of c8c6000's sweep: the continue
+# fix, warning cleanup, catalog hardening, five .asm .size directives,
+# registry diff).
+BENCH_COMMIT=74195c4378e3cd97a7677555d66e473f19370962
 
 # ---- cross toolchains (Ubuntu gcc-13 cross packages) ----
 RISCV64_CXX=riscv64-linux-gnu-g++-13

@@ -12,8 +12,9 @@ set -euo pipefail
 #     earlier draft guessed output/sdk/sysroot-riscv64-purecap; the sysroot is
 #     the env.sh CHERI_SYSROOT_RISCV64 pin, the path OBSERVED from the built
 #     tree in Step 6 - consumed, never guessed);
-#   - an objdump shim so the bench's bare-`objdump` opcode extraction resolves
-#     to the host riscv64-linux-gnu-objdump (GNU format reads FreeBSD ELF);
+#   - an objdump shim so any bare-`objdump` call resolves to the SDK's own
+#     CHERI-capable objdump (the host riscv64-linux-gnu-objdump cannot decode
+#     an xcheri binary); the extraction itself gets that tool via OBJDUMP;
 #   - a host scheduler smoke build (ARCH=cheri_riscv64 CXX=g++, no enable flag)
 #     staged as build/cheri_riscv64/run-test.host, mirroring aarch64/prepare.sh;
 #   - the corpus staged by scripts/common/build_corpus.sh (derived registry via
@@ -84,6 +85,14 @@ for c in "$SDK_BIN/clang++" "$SDK_BIN"/*-clang++; do
   if [ -x "$c" ]; then CLANG="$c"; break; fi
 done
 [ -n "$CLANG" ] || die "CHERI-LLVM clang++ not found under $SDK_BIN - run make ARCH=cheri_riscv64 deploy (the emulator/image leg builds the SDK)"
+# The SDK's own CHERI-capable objdump (wrapper over llvm-objdump --mattr=...,
+# +xcheri), with bare llvm-objdump as the fallback candidate.  The SDK bin dir
+# is deliberately off PATH, so the resolved path is passed around explicitly.
+OBJDUMP=""
+for c in "$SDK_BIN/riscv64cheri-objdump" "$SDK_BIN/llvm-objdump"; do
+  if [ -x "$c" ]; then OBJDUMP="$c"; break; fi
+done
+[ -n "$OBJDUMP" ] || die "CHERI-capable objdump (riscv64cheri-objdump or llvm-objdump) not found under $SDK_BIN - run make ARCH=cheri_riscv64 deploy (the emulator/image leg builds the SDK)"
 [ -d "$SYSROOT" ] || die "purecap sysroot pin $SYSROOT absent - run make ARCH=cheri_riscv64 deploy to build it"
 [ -f "$SYSROOT/usr/include/stdio.h" ] || die "$SYSROOT has no usr/include/stdio.h - not a usable sysroot"
 [ -f "$SYSROOT/lib/libc.so.7" ] || die "$SYSROOT has no lib/libc.so.7 - not the riscv64-purecap sysroot"
@@ -92,8 +101,8 @@ done
 # changes alone, and a stale object from another lane would be linked) ----
 make -C "$ROOT/benchmark" clean >/dev/null 2>&1
 
-# ---- objdump shim (the func-opcode extraction calls bare objdump) ----
-bash "$ROOT/scripts/common/shim.sh" "${RISCV64_OBJDUMP%-objdump}" "$SHIM_DIR"
+# ---- objdump shim (bare-objdump safety net; the extraction uses OBJDUMP) ----
+bash "$ROOT/scripts/common/shim.sh" "$OBJDUMP" "$SHIM_DIR"
 export PATH="$SHIM_DIR:$PATH"
 
 # ---- host scheduler smoke build (aarch64-style; no enable flag) ----
@@ -117,7 +126,7 @@ make -B -C "$ROOT/benchmark" run-test lib/common/libcfi.so \
   "${ENABLE_FLAG}=yes" \
   ARCH="$TOKEN" \
   CXX="$CLANG --target=riscv64-unknown-freebsd --sysroot=$SYSROOT" \
-  ASM="$CLANG" OBJDUMP="$RISCV64_OBJDUMP"
+  ASM="$CLANG" OBJDUMP="$OBJDUMP"
 install -m 0755 "$ROOT/benchmark/run-test" "$PAYLOAD/run-test"
 mkdir -p "$PAYLOAD/lib/common"
 install -m 0755 "$ROOT/benchmark/lib/common/libcfi.so" "$PAYLOAD/lib/common/libcfi.so"

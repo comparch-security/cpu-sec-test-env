@@ -138,7 +138,7 @@ All pins live in `env.sh` only — no script hard-codes them.
 
 | Item | Pin |
 |---|---|
-| bench commit | `c8c600066f4a1d0845d893bbfa24e46445e59b2b` |
+| bench commit | `74195c4378e3cd97a7677555d66e473f19370962` (the five re-run lanes — `cheri_riscv64`, `aarch64`, `aarch64-pa`, `aarch64-bti`, `aarch64-mte`; the `riscv64` and `aarch64-morello` stamps predate the bump and remain at `c8c600066f4a1d0845d893bbfa24e46445e59b2b`, the pin where their caveats below were measured) |
 | riscv64 toolchain | `riscv64-linux-gnu-{g++-13,gcc-13,as,objdump}` (Ubuntu gcc-13 cross 13.4.0) |
 | aarch64 toolchain / sysroot | `aarch64-linux-gnu-{g++-13,gcc-13,as,objdump}`, `/usr/aarch64-linux-gnu` |
 | QEMU | 10.2.1 (`qemu-system-riscv64`, `qemu-aarch64`) |
@@ -187,17 +187,17 @@ isolation first.
   `assembly_helper` symbol and wrote an empty side file), and
   `mss-write-by-stack-pointer` (1) is declared in the registry's
   `expect-results` at this pin.
-- **Two lane deviations at this pin are open bench-side defects** (both
-  deferred to the bench repo; both in the bench's opcode-extraction path). The
-  `cheri_riscv64` lane cannot deploy — the extraction selection has no CHERI
-  variant, so the x64 fallback script runs and its bare `objdump` call cannot
-  read an xcheri binary (deferral
-  `cheri-riscv64-opcode-extraction-deploy-abort`). The four aarch64 host lanes
-  build one record short — `acc-read-func` is recorded not-built (`1025`)
-  because the extraction invoked an aarch64-incapable objdump (deferral
-  `aarch64-func-opcode-extraction-host-objdump`). Every other verdict on the
-  six stamps this pin produced is conforming, declared, or a known handoff
-  row.
+- **The two lane deviations recorded at the previous pin are closed at this
+  one.** Both were bench-side defects in the opcode-extraction path (deferrals
+  `cheri-riscv64-opcode-extraction-deploy-abort` and
+  `aarch64-func-opcode-extraction-host-objdump`), fixed in the pinned bench and
+  consumed by this cycle's re-runs: the `cheri_riscv64` lane deploys and stamps
+  (its corpus build routes the extraction through the SDK's own CHERI
+  `riscv64cheri-objdump`), and the four aarch64 host lanes' `acc-read-func`
+  exits 0 — it was recorded not-built (`1025`) at the previous pin — with the
+  extraction tool and the shim's bare-`objdump` PATH entry both named in each
+  lane's run log. The five re-run lanes' stamps carry the evidence; the
+  `riscv64` and `aarch64-morello` stamps predate the bump and are unchanged.
 - **The CHERI lanes run the strict corpus.**
   Both boot their pins and run the corpus end-to-end over virtio-9p. The
   independent-assembly translation is in the pinned bench, so the corpus builds
@@ -207,8 +207,9 @@ isolation first.
   `mss-write-by-stack-pointer` on `cheri_riscv64`; `cfi-call-mid-func` on
   `aarch64-morello`). Verdicts outside the registry's `expect-results` are
   recorded as handoff rows for the bench sweep, never skipped. At this pin the
-  `cheri_riscv64` lane stops earlier, in the corpus build (see the preceding
-  caveat), and produces no stamp.
+  `cheri_riscv64` lane deploys and stamps; its corpus build routes the
+  extraction through the SDK's CHERI objdump (see the closed-deviations caveat
+  above).
   `scripts/cheri/dialect_probe.sh` remains available and still records
   the raw dialect probe into `results/cheri/probe-<date>.json`.
 - **The two CHERI lanes do not boot the same way, on purpose.** riscv64 loads

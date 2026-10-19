@@ -9,8 +9,8 @@ set -euo pipefail
 #   - verifies the binfmt handler by READING
 #     /proc/sys/fs/binfmt_misc/qemu-aarch64 (exists, enabled, interpreter
 #     names the pinned qemu-aarch64) - never writes to the node;
-#   - creates the objdump shim (the bench's get_aarch64_func_inst.sh calls
-#     bare objdump);
+#   - creates the objdump shim (the bare-`objdump` safety net; the extraction
+#     itself is routed through the OBJDUMP knob);
 #   - builds the scheduler as a HOST binary with `make -B` and only
 #     ARCH/CXX/ASM/OBJDUMP on the command line (never any scheduler-cxxflags
 #     override - the bench Makefile's own assembly, including
@@ -103,7 +103,7 @@ interp=$(awk '/^interpreter/{print $2}' "$node")
 # -B scheduler build below exists for.)
 make -C "$ROOT/benchmark" clean
 
-# ---- objdump shim (func-opcode extraction calls bare objdump) ----
+# ---- objdump shim (the bare-`objdump` safety net; extraction uses the knob) ----
 bash "$ROOT/scripts/common/shim.sh" "${AARCH64_OBJDUMP%-objdump}" "$SHIM_DIR"
 
 # ---- scheduler as a host binary ----
@@ -141,6 +141,7 @@ mkdir -p benchmark/test
   echo "emulator: $qemu_ver"
   echo "binfmt: $(awk '/^interpreter/{printf "%s %s", $1, $2}' "$node") (handler $node)"
   echo "MAKEFLAGS: $mf"
+  echo "objdump (test binaries): $AARCH64_OBJDUMP -> $(command -v "$AARCH64_OBJDUMP") ($("$AARCH64_OBJDUMP" --version | head -1))"
   echo "sysroot: $AARCH64_SYSROOT"
   echo "LIBC: $glibc_ver"
   echo "Compiler (test binaries): $AARCH64_CXX ($("$AARCH64_CXX" --version | head -1))"

@@ -24,14 +24,11 @@ set -euo pipefail
 # cross compile carries --sysroot=<that lane's CHERI_SYSROOT_* env.sh pin> -
 # without it #include <stdio.h> resolves against the host include root.
 #
-# --bring-up: the tolerant mode for the first CHERI bring-up run.  The three
-#   abort paths below (a unit failure, a missing derived side file, the finalize
+# --bring-up: the tolerant mode for a first bring-up run.  The three abort
+#   paths below (a unit failure, a missing derived side file, the finalize
 #   step) each record the offending artifact as a non-built manifest entry and
-#   continue instead of exiting - the CHERI lanes' predicted failure class is
-#   exactly the missing-side-file case (test/acc-read-func-func-opcode.tmp is a
-#   byproduct of the acc-read-func.gen unit, whose extraction is expected to
-#   fail there).  Strict mode - the default, and what the final acceptance run
-#   uses - still exits non-zero.
+#   continue instead of exiting.  Strict mode - the default, and what the final
+#   acceptance run uses - still exits non-zero.
 #
 # --env-lane: env lane name forwarded to derive_registry.py for its skip table
 #   (defaults to LANE).  --enable-flag: the bench enable flag name to pass to
@@ -104,6 +101,16 @@ find_sdk_clang() {  # bindir
   done
   return 1
 }
+# The SDK's own CHERI-capable objdump: the riscv64cheri-objdump wrapper
+# (llvm-objdump --mattr=+m,+a,+f,+d,+c,+xcheri) with bare llvm-objdump as
+# the fallback candidate.
+find_sdk_objdump() {  # bindir
+  local bindir=$1 c
+  for c in "$bindir/riscv64cheri-objdump" "$bindir/llvm-objdump"; do
+    [ -x "$c" ] && { echo "$c"; return 0; }
+  done
+  return 1
+}
 
 case "$LANE" in
   riscv64)
@@ -113,17 +120,19 @@ case "$LANE" in
   cheri_riscv64)
     CLANG=$(find_sdk_clang "$CHERI_BROOT/output/sdk/bin") ||
       { di "CHERI-LLVM clang++ not found under $CHERI_BROOT/output/sdk/bin - run the image leg first"; exit 1; }
+    OBJDUMP=$(find_sdk_objdump "$CHERI_BROOT/output/sdk/bin") ||
+      { di "CHERI-capable objdump (riscv64cheri-objdump or llvm-objdump) not found under $CHERI_BROOT/output/sdk/bin - run the image leg first"; exit 1; }
     SYSROOT="$ROOT/$CHERI_SYSROOT_RISCV64"
     [ -d "$SYSROOT" ] || { di "purecap sysroot pin $SYSROOT absent"; exit 1; }
     # The pinned bench flag block carries the triple and the -march/-mabi on
     # every path; --sysroot is env-only and is mandatory (without it
-    # #include <stdio.h> resolves against the host include root).  OBJDUMP
-    # stays the host riscv64-linux-gnu-objdump (the plan's objdump-shim
-    # boundary: GNU format reads FreeBSD ELF).
+    # #include <stdio.h> resolves against the host include root).  OBJDUMP is
+    # the SDK's own CHERI objdump: the host riscv64-linux-gnu-objdump cannot
+    # decode an xcheri binary (unsupported relocation type 0xc1).  The shim
+    # gets the same absolute tool path, so bare `objdump` resolves there too.
     CXX="$CLANG --target=riscv64-unknown-freebsd --sysroot=$SYSROOT"
     ASM="$CLANG"
-    OBJDUMP=$RISCV64_OBJDUMP
-    SHIM_PREFIX="${RISCV64_OBJDUMP%-objdump}"
+    SHIM_PREFIX="$OBJDUMP"
     ;;
   aarch64)
     [ "$ENABLE_FLAG" = enable_aarch64_morello ] ||

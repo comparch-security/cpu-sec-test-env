@@ -47,7 +47,7 @@ printf '%s\n' "$LANE" > "$BUILD_DIR/.lane.lock"
 
 ARCH=aarch64
 ENABLE_FLAG=${ENABLE_FLAG:-}
-SHIM_DIR="$BUILD_DIR/$LANE/shim"
+SHIM_DIR="$ROOT/$BUILD_DIR/$LANE/shim"
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 DEST="$RESULTS_DIR/$LANE/$STAMP"
 
@@ -78,10 +78,18 @@ cleanup() {
 trap cleanup EXIT
 
 # The shim may already exist from prepare.sh; recreate if the lane dir was
-# cleaned in between (func-opcode extraction calls bare objdump).
+# cleaned in between (the bare-`objdump` safety net; the extraction itself is
+# routed through the OBJDUMP knob).
 [ -x "$SHIM_DIR/objdump" ] ||
   bash scripts/common/shim.sh "${AARCH64_OBJDUMP%-objdump}" "$SHIM_DIR"
 export PATH="$SHIM_DIR:$PATH"
+
+# ---- tool-resolution audit (the deferral's ask: which objdump is in play) ----
+# (a) the tool the extraction will use - the knob value the child makes get
+#     through MAKEFLAGS; (b) what a bare `objdump` resolves to through the
+#     shim now that the shim dir is $ROOT-anchored.
+echo "aarch64/run ($LANE): extraction objdump: $(command -v "$AARCH64_OBJDUMP") ($("$AARCH64_OBJDUMP" --version | head -1))"
+echo "aarch64/run ($LANE): bare objdump resolves to: $(command -v objdump) ($(objdump --version | head -1))"
 
 # QEMU_LD_PREFIX pins the loader/sysroot qemu-aarch64 resolves for every
 # aarch64 ELF the kernel hands it through binfmt.
