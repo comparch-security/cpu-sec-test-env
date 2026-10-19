@@ -138,7 +138,7 @@ All pins live in `env.sh` only — no script hard-codes them.
 
 | Item | Pin |
 |---|---|
-| bench commit | `33f6f84b10080888d98eed535dda8313a914d161` |
+| bench commit | `c8c600066f4a1d0845d893bbfa24e46445e59b2b` |
 | riscv64 toolchain | `riscv64-linux-gnu-{g++-13,gcc-13,as,objdump}` (Ubuntu gcc-13 cross 13.4.0) |
 | aarch64 toolchain / sysroot | `aarch64-linux-gnu-{g++-13,gcc-13,as,objdump}`, `/usr/aarch64-linux-gnu` |
 | QEMU | 10.2.1 (`qemu-system-riscv64`, `qemu-aarch64`) |
@@ -178,15 +178,26 @@ isolation first.
   The independent-assembly translation (`cfi-return-to-peer-asmfunc` and
   `cfi-return-to-parent-non-call-site-by-asmfunc`) is in the pinned bench
   commit, so the derived registry declares no skips and the corpus stages 145
-  units. Four riscv64 verdicts lie outside the registry's `expect-results` and
-  are handoff rows, not skips: `acc-read-func` exits 1 at this pin because the
-  bench's opcode-extraction script matches the translated `assembly_helper`
-  symbol and writes an empty side file (deferral
-  `func-opcode-gen-helper-symbol-match`, fixed in the bench sweep); and
-  `cfi-jump-func-ra-from-heap-memcpy-implicit-arith` (267),
-  `cfi-return-to-parent-wrong-call-site-fakefunc` (255) and
-  `mss-write-by-stack-pointer` (1) are pre-existing bench-side expectation gaps
-  (deferral `review-lines-bench-expectation-gaps`).
+  units. Two riscv64 verdicts lie outside the registry's `expect-results` and
+  are handoff rows to the bench's return-code-delivery workstream, not skips:
+  `cfi-jump-func-ra-from-heap-memcpy-implicit-arith` (267) and
+  `cfi-return-to-parent-wrong-call-site-fakefunc` (255). The sweep's
+  opcode-extraction fix is lane-confirmed at this pin: `acc-read-func` exits 0
+  (before the sweep it exited 1 — the extractor matched the translated
+  `assembly_helper` symbol and wrote an empty side file), and
+  `mss-write-by-stack-pointer` (1) is declared in the registry's
+  `expect-results` at this pin.
+- **Two lane deviations at this pin are open bench-side defects** (both
+  deferred to the bench repo; both in the bench's opcode-extraction path). The
+  `cheri_riscv64` lane cannot deploy — the extraction selection has no CHERI
+  variant, so the x64 fallback script runs and its bare `objdump` call cannot
+  read an xcheri binary (deferral
+  `cheri-riscv64-opcode-extraction-deploy-abort`). The four aarch64 host lanes
+  build one record short — `acc-read-func` is recorded not-built (`1025`)
+  because the extraction invoked an aarch64-incapable objdump (deferral
+  `aarch64-func-opcode-extraction-host-objdump`). Every other verdict on the
+  six stamps this pin produced is conforming, declared, or a known handoff
+  row.
 - **The CHERI lanes run the strict corpus.**
   Both boot their pins and run the corpus end-to-end over virtio-9p. The
   independent-assembly translation is in the pinned bench, so the corpus builds
@@ -195,7 +206,9 @@ isolation first.
   lane's derived registry with a reason (`acc-get-frame-size`,
   `mss-write-by-stack-pointer` on `cheri_riscv64`; `cfi-call-mid-func` on
   `aarch64-morello`). Verdicts outside the registry's `expect-results` are
-  recorded as handoff rows for the bench sweep, never skipped.
+  recorded as handoff rows for the bench sweep, never skipped. At this pin the
+  `cheri_riscv64` lane stops earlier, in the corpus build (see the preceding
+  caveat), and produces no stamp.
   `scripts/cheri/dialect_probe.sh` remains available and still records
   the raw dialect probe into `results/cheri/probe-<date>.json`.
 - **The two CHERI lanes do not boot the same way, on purpose.** riscv64 loads
