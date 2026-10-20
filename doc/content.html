@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="last-modified" content="2026-10-20">
+    <meta name="last-modified" content="2026-10-21">
     <title>Documentation | cpu-sec-test-env</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -19,7 +19,12 @@
             every supported architecture from a single tree. The benchmark itself
             lives in the <code>benchmark/</code> git submodule, consumed read-only
             at the commit pinned in <code>env.sh</code>: every change a lane needs
-            is an environment change here, never an edit inside the submodule.
+            is an environment change here, never an edit inside the submodule. One
+            consumed exception: the riscv64-nemu venue's own
+            <code>build-corpus.sh</code> swaps its derived registry over the tracked
+            <code>configure.json</code> for the build's duration and trap-restores
+            it — the lane never authors an in-submodule change, and its preflight
+            and post-assert guard that swap.
         </p>
 
         <p>
@@ -55,6 +60,13 @@
                 <td><code>results/riscv64/&lt;stamp&gt;/</code></td>
             </tr>
             <tr>
+                <td><code>riscv64-nemu</code></td>
+                <td>Linux 6.18.56 guest interpreted by the workspace's XiangShan
+                    NEMU; the corpus and the riscv64 scheduler run inside it and
+                    results are parsed from the guest console</td>
+                <td><code>results/riscv64-nemu/&lt;stamp&gt;/</code></td>
+            </tr>
+            <tr>
                 <td><code>cheri_riscv64</code></td>
                 <td>Purecap CheriBSD guest under the CHERI qemu build — bbl firmware
                     in M-mode plus an external kernel</td>
@@ -79,7 +91,7 @@
         </ul>
     </main>
     <footer>
-        <p>Last updated: 2026-10-20</p>
+        <p>Last updated: 2026-10-21</p>
     </footer>
 </body>
 </html>

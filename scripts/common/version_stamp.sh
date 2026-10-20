@@ -17,7 +17,7 @@ LANE=$1
 OUT=$2
 
 case "$LANE" in
-  x86_64|riscv64|cheri_riscv64|aarch64|aarch64-*|aarch64-morello) ;;
+  x86_64|riscv64|riscv64-nemu|cheri_riscv64|aarch64|aarch64-*|aarch64-morello) ;;
   *)
     echo "usage: $0 LANE OUT_FILE  (LANE must be a known lane name, got '$LANE')" >&2
     exit 2

@@ -17,6 +17,13 @@ on every supported architecture from a single repository:
   writable one. Both lanes run the strict corpus; the only not-run records are
   platform build failures declared in the lane's derived registry (see *Known
   caveats*).
+- **riscv64-nemu** — the bench's own NEMU venue
+  (`benchmark/platform/riscv64-nemu-linux/`): the host-built corpus and the
+  riscv64 scheduler run inside a Linux 6.18.56 guest emulated by the workspace's
+  XiangShan NEMU (`../NEMU`, commit-pinned), with results extracted from the
+  guest console. Deploy-first, like the system lanes; the NEMU location is a
+  relative default, so the lane follows the workspace layout without an
+  absolute path in `env.sh`.
 
 The benchmark itself lives in the `benchmark/` git submodule
 (`comparch-security/cpu-sec-bench`), consumed read-only at the commit pinned in
@@ -42,6 +49,13 @@ sudo apt install qemu-system-riscv qemu-system-data qemu-user qemu-user-binfmt \
 - The cross toolchains (13.4.0) build the riscv64 corpus and guest image and the
   aarch64 corpus; `libhwasan0-arm64-cross` supplies the MTE lane's
   `-fsanitize=hwaddress` runtime.
+- A built XiangShan NEMU interpreter for the `riscv64-nemu` lane: a sibling
+  `NEMU` checkout resolved by the repo-relative default
+  `NEMU_DIR=../NEMU` with `NEMU_BIN=$NEMU_DIR/build/riscv64-nemu-interpreter`
+  built from it, at the pinned `NEMU_COMMIT`. `NEMU_DIR`/`NEMU_BIN` are one
+  overridable pair (absolute paths allowed); the lane records the binary's
+  sha256 and compares it run-to-run rather than pinning it, so a stale local
+  build is disclosed, not silently reused.
 
 The CHERI lanes additionally build their two emulators and their guests with the
 pinned `cheribuild`, which needs five more host packages:
@@ -86,12 +100,28 @@ make ARCH=<lane> [enable_aarch64_<pa|bti|mte>=yes] <deploy|run|clean|dump>
 | `make ARCH=cheri_riscv64 deploy` | Builds the CHERI riscv64 emulator, the CheriBSD disk image and the corpus (a cold `deploy` is a world build — hours) |
 | `make ARCH=cheri_riscv64 run` | Boots the pinned image under `qemu-system-riscv64xcheri`, runs the corpus in the guest, collects results in `results/cheri_riscv64/<stamp>/` |
 | `make ARCH=aarch64-morello deploy` / `run` | The Morello lane (`qemu-system-morello`, UEFI + `loader(8)`); results in `results/aarch64-morello/<stamp>/` |
+| `make ARCH=riscv64-nemu deploy` | Builds the corpus, the guest image and its rootfs through the venue's platform scripts (`build/riscv64-nemu/`); seeded caches make it run offline |
+| `make ARCH=riscv64-nemu run` | Boots the image under the pinned NEMU, runs the whole suite in the guest, extracts the results from the console |
 | `make ARCH=<lane> clean` | Removes that lane's build tree and the bench's generated files |
-| `make ARCH=x86_64 dump` | The bench's own dump target (riscv64 has no dump: binaries live inside the guest image) |
+| `make ARCH=x86_64 dump` | The bench's own dump target (riscv64 has no dump: binaries live inside the guest image; riscv64-nemu refuses too — its corpus is staged corpus-keyed) |
 
 `ARCH` defaults to the host architecture. `deploy` is implicit for the host
-lanes — `run` does everything. For the riscv64 and CHERI lanes, run `deploy`
-first, then `run` (each is wrapped in its own `timeout`). The CHERI lanes'
+lanes — `run` does everything. For the riscv64, riscv64-nemu and CHERI lanes,
+run `deploy` first, then `run` (each is wrapped in its own `timeout`, except the
+riscv64-nemu lane: its run leg carries no outer `timeout`, and its bound is
+two-tier instead — the platform's inner NEMU timeout at `LANE_RUN_TIMEOUT` and
+the lane's own watchdog at `LANE_RUN_TIMEOUT + 120 s`, so the platform's
+diagnosis fires first). The
+riscv64-nemu lane's NEMU location is a *relative* default —
+`NEMU_DIR=../NEMU`, `NEMU_BIN=$NEMU_DIR/build/riscv64-nemu-interpreter`,
+resolved against this repo's root — so a checkout elsewhere overrides both
+together (absolute paths allowed); the lane asserts the checkout's `HEAD`
+equals the pinned `NEMU_COMMIT` on deploy **and** on run, and compares the live
+binary's sha256 against the **deploy** meta's `nemu_bin.sha256` (as well as the
+run meta's own value), so a rebuild between deploy and run is caught instead of
+silently booted. A first cold deploy needs
+the network (three source checkouts) and takes roughly an hour and a half; with
+the caches seeded the deploy is offline and settles in minutes. The CHERI lanes'
 `deploy` splits its timeouts deliberately: the cheap legs (source staging,
 `prepare.sh`) carry `LANE_DEPLOY_TIMEOUT`, while the emulator and image builds
 carry `CHERI_BUILD_TIMEOUT` (86400 s) — an outer `LANE_DEPLOY_TIMEOUT` would
@@ -121,12 +151,25 @@ results/cheri_riscv64/<UTC-stamp>/   results.json  results.dat  versions.txt
 results/aarch64-morello/<UTC-stamp>/     + guest-status.txt  variables.json (both lanes)
                                      the full guest console transcript is
                                      build/<lane>/console.log, outside results/
+results/riscv64-nemu/<UTC-stamp>/   results.json  results.dat  boot.log
+                            meta.json  meta.deploy.json  versions.txt
+                            (+ variables.json when the registry's set-var
+                             records ran; the deploy's corpus and image live
+                             under build/riscv64-nemu/platform/<runset>/)
 ```
 
 `versions.txt` is the host-provenance record: the env.sh pins, the dpkg versions
 of the packages above, and the host `uname`. On the riscv64 lane the guest's
 `test/sys_info.txt` carries the guest-side truth (guest kernel and cpuinfo plus
-only the pin lines — never the host `uname`).
+only the pin lines — never the host `uname`). On the riscv64-nemu lane the stamp
+adds the run's `meta.json` (platform, runset, bench commit/tree, image and NEMU
+sha256s, the record counts, the guest exit code and the good-trap flag) and the
+deploy's `meta.deploy.json` (the corpus compiler, the pinned inputs, the image
+and rootfs sha256s), and `versions.txt` gains a `# nemu` section: the binary's
+path, its `HEAD`, `describe --always --dirty` and its sha256. Those two metas
+are the authoritative tree/provenance record for this lane — the venue's
+guest-side `# Bench tree` line reads `<pin>-dirty` even at a clean pin (see
+*Known caveats*).
 
 `manifest.json` records the corpus as deployed: the bench commit, the lane, the
 per-unit file list with sha256 and mode, the derived side file(s), and the
@@ -138,7 +181,8 @@ All pins live in `env.sh` only — no script hard-codes them.
 
 | Item | Pin |
 |---|---|
-| bench commit | `74195c4378e3cd97a7677555d66e473f19370962` (the five re-run lanes — `cheri_riscv64`, `aarch64`, `aarch64-pa`, `aarch64-bti`, `aarch64-mte`; the `riscv64` and `aarch64-morello` stamps predate the bump and remain at `c8c600066f4a1d0845d893bbfa24e46445e59b2b`, the pin where their caveats below were measured) |
+| bench commit | `a09f57091d9a933367a3fc31cc44e3846b3d5907` (the `riscv64-nemu` lane is the only stamp at this pin; the eight older lane names' stamps predate the bump — their measurements above were taken at `74195c4378e3cd97a7677555d66e473f19370962`, and the `riscv64` and `aarch64-morello` stamps at `c8c600066f4a1d0845d893bbfa24e46445e59b2b`, the pin where their caveats below were measured) |
+| NEMU | `../NEMU` @ `ae1ec3cd869b9c5e1783af691538d5c26f37ee55` — the workspace checkout; `NEMU_DIR`/`NEMU_BIN` are a relative-default pair, and the binary's sha256 is recorded and compared run-to-run, **not** pinned |
 | riscv64 toolchain | `riscv64-linux-gnu-{g++-13,gcc-13,as,objdump}` (Ubuntu gcc-13 cross 13.4.0) |
 | aarch64 toolchain / sysroot | `aarch64-linux-gnu-{g++-13,gcc-13,as,objdump}`, `/usr/aarch64-linux-gnu` |
 | QEMU | 10.2.1 (`qemu-system-riscv64`, `qemu-aarch64`) |
@@ -151,7 +195,7 @@ All pins live in `env.sh` only — no script hard-codes them.
 | CHERI boot firmware | riscv64: `CTSRD-CHERI/riscv-pk` @ `0cb596cf6e49c0014256300b614c5cd30cb90d57` → `bbl-riscv64cheri-virt-fw_jump.bin`; Morello: `edk2-aarch64-code.fd` |
 | CHERI CPU pins | riscv64 `rv64,sstc=off` (Sstc workaround — the pinned riscv-pk firmware never sets `menvcfg.STCE`); Morello `morello`, `virt,gic-version=3` |
 | CHERI sysroots | `CHERI_SYSROOT_RISCV64`, `CHERI_SYSROOT_MORELLO` — purecap, under two different SDK roots |
-| reproducibility | `KBUILD_BUILD_TIMESTAMP/USER/HOST`, `SOURCE_DATE_EPOCH` (unset for the CheriBSD legs) |
+| reproducibility | `KBUILD_BUILD_TIMESTAMP/USER/HOST`, `SOURCE_DATE_EPOCH` (unset for the CheriBSD legs); the riscv64-nemu image is **not** byte-reproducible — see the caveats |
 | timeouts | lane run 3600 s, lane deploy 7200 s; CHERI emulator/image legs 86400 s (`CHERI_BUILD_TIMEOUT`) |
 
 The riscv64 image is byte-reproducible: the kernel/busybox builds carry the
@@ -168,12 +212,61 @@ bench: trusted code from a trusted source, but **adversarial by design**. The
 host-run lanes (x86_64, aarch64) execute them **unsandboxed with the invoking
 user's privileges — deliberately, and only on this workstation**; the
 virtual-machine lanes (riscv64, cheri_riscv64, aarch64-morello) are isolated by
-their disposable qemu guests, each booted `-snapshot` from its pinned image.
-Do not repoint a host lane at an untrusted registry or corpus without adding
-isolation first.
+their disposable qemu guests, each booted `-snapshot` from its pinned image. The
+riscv64-nemu lane sits between the two models: no corpus instruction ever
+executes as a host process — every one is interpreted by the pinned NEMU — and
+the guest's devices are NEMU's own models over the image the deploy assembles
+under `build/`, so its host surface is the NEMU binary and those build files
+rather than the corpus. Do not repoint a host lane at an untrusted registry or
+corpus without adding isolation first.
 
 ## Known caveats
 
+- **The riscv64-nemu lane's first stamp is green end-to-end.** All 246 records
+  run in the NEMU-emulated guest; exactly two rows lie outside the registry's
+  `expect-results` — the same two handoff rows the riscv64 lane carries (F2,
+  `cfi-jump-func-ra-from-heap-memcpy-implicit-arith` = 267, and the 255
+  expectation gap `cfi-return-to-parent-wrong-call-site-fakefunc`) — and exactly
+  two differ from the venue's own host-native reference (F2, and
+  `mts-access-after-reclaim-heap`, which records 0 where the reference records 1:
+  a legal pass verdict under the exit-code contract, never an anomaly). Two runs
+  at one image show zero per-record drift. Results are extracted by parsing the
+  guest console, so every non-timeout stamp carries console evidence as
+  `boot.log` — the run dir's own log when one was created, else the lane's
+  platform log copied under that name; a run whose completeness gate
+  fails publishes `boot.log` + `versions.txt` only, and a timeout publishes
+  nothing.
+- **The riscv64-nemu image is not byte-reproducible across deploys.** Its
+  platform packs the rootfs with `cpio -o -H newc` but without `--reproducible`,
+  so host inode numbers leak into the newc headers and two deploys at identical
+  pins differ byte-for-byte at equal size (bench-side, pre-existing; recorded as
+  a deferral — the fix, adding `--reproducible`, belongs to a bench cycle). The
+  venue README's byte-reproducibility claim is wrong for now. Each stamp records
+  the image sha256 it actually ran (`meta.json` and `meta.deploy.json` agree), so
+  compare stamps within one image.
+- **The riscv64-nemu guest records `# Bench tree: <pin>-dirty` even at a clean
+  pin** — a bench-side artifact of the venue's corpus staging (the marker is
+  computed while the platform's own registry swap is active), contradicting the
+  same run's `meta.json` (`bench_tree: <pin>`). Two provenance records of one run
+  disagree; treat `meta.json`/`meta.deploy.json` as authoritative. Filed
+  bench-side.
+- **The riscv64-nemu deploy consumes the venue's transient registry swap.** The
+  platform's own `build-corpus.sh` swaps its derived registry over the tracked
+  `benchmark/configure.json` for the build's duration and trap-restores it; the
+  lane authors no in-submodule change and guards the swap from both sides — the
+  deploy preflight fails fast on a leaked swap (naming the deferral
+  `corpus-build-registry-swap-crash-safety` and the restore command), and every
+  exit path re-asserts the submodule clean. A SIGKILL *inside* the swap window
+  still leaks the subset; that crash-safety gap is the deferral's own,
+  bench-side fix.
+- **Stamps carry host-local absolute paths.** This lane's `versions.txt`
+  `nemu-bin:` line (the binary's `realpath`) and the copied metas'
+  `nemu_bin.path` / `image.path` name this workstation's directories — scrub a
+  stamp before sharing it off the machine.
+- **This repository has no permanent test suite.** There is no test catalog and
+  no CI gate: the lanes' verification lives in the machine-local plan scripts
+  under `tmp/verification/` (step verifiers, acceptance and negative drivers)
+  and in the lane runs' own stamps, all uncommitted by design.
 - **All 246 records run on the riscv64 lane.**
   The independent-assembly translation (`cfi-return-to-peer-asmfunc` and
   `cfi-return-to-parent-non-call-site-by-asmfunc`) is in the pinned bench
@@ -182,13 +275,14 @@ isolation first.
   are handoff rows to the bench's return-code-delivery workstream, not skips:
   `cfi-jump-func-ra-from-heap-memcpy-implicit-arith` (267) and
   `cfi-return-to-parent-wrong-call-site-fakefunc` (255). The sweep's
-  opcode-extraction fix is lane-confirmed at this pin: `acc-read-func` exits 0
+  opcode-extraction fix is lane-confirmed at `74195c43` (the pre-bump pin): `acc-read-func` exits 0
   (before the sweep it exited 1 — the extractor matched the translated
   `assembly_helper` symbol and wrote an empty side file), and
   `mss-write-by-stack-pointer` (1) is declared in the registry's
   `expect-results` at this pin.
-- **The two lane deviations recorded at the previous pin are closed at this
-  one.** Both were bench-side defects in the opcode-extraction path (deferrals
+- **The two lane deviations recorded at the previous pin are closed at that
+  pin** (measured at `74195c43`; the eight older lane names' stamps predate the
+  `a09f570` bump). Both were bench-side defects in the opcode-extraction path (deferrals
   `cheri-riscv64-opcode-extraction-deploy-abort` and
   `aarch64-func-opcode-extraction-host-objdump`), fixed in the pinned bench and
   consumed by this cycle's re-runs: the `cheri_riscv64` lane deploys and stamps
@@ -206,7 +300,7 @@ isolation first.
   lane's derived registry with a reason (`acc-get-frame-size`,
   `mss-write-by-stack-pointer` on `cheri_riscv64`; `cfi-call-mid-func` on
   `aarch64-morello`). Verdicts outside the registry's `expect-results` are
-  recorded as handoff rows for the bench sweep, never skipped. At this pin the
+  recorded as handoff rows for the bench sweep, never skipped. At `74195c43` the
   `cheri_riscv64` lane deploys and stamps; its corpus build routes the
   extraction through the SDK's CHERI objdump (see the closed-deviations caveat
   above).
@@ -235,8 +329,10 @@ isolation first.
   backs `abi/riscv_v_default_allow` with `IS_ENABLED(…)`), because Ubuntu's
   glibc never issues the V prctl itself. The lane pins 6.18.56 and its kernel
   fragment forces both symbols.
-- **The NEMU / XiangShan venue is deliberately not covered.** The riscv64 image
-  is qemu-virt-only by decision, not NEMU-bootable.
+- **The NEMU / XiangShan venue has its own lane, not a riscv64-lane boot.** The
+  riscv64 lane's image is qemu-virt-only by decision, not NEMU-bootable; the NEMU
+  route is `riscv64-nemu`, which builds its own image through the venue's
+  platform scripts under `benchmark/platform/riscv64-nemu-linux/`.
 - **`tmp/` is machine-local** (untracked): plans, reports and verification
   scripts live there by repo convention and are re-runnable artifacts, not
   tracked deliverables.

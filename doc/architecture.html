@@ -46,12 +46,16 @@
 
         <p>
             All pins live in <code>env.sh</code>: the bench commit, the toolchains,
-            qemu, the guest kernel and busybox, cheribuild and the CHERI images,
+            qemu, the guest kernel and busybox, the NEMU checkout and commit,
+            cheribuild and the CHERI images,
             the roots and the timeouts. The Makefile and the lane scripts read
             them; nothing else hard-codes them. The Makefile refuses to run with an
             empty timeout or an empty build root rather than let a shell command
-            fail at the wrong moment, and the x86_64 <code>deploy</code> re-checks
-            that the submodule's <code>HEAD</code> equals the pinned bench commit.
+            fail at the wrong moment; the x86_64 <code>deploy</code> re-checks
+            that the submodule's <code>HEAD</code> equals the pinned bench commit,
+            and the riscv64-nemu lane's <code>deploy</code> and <code>run</code>
+            both re-check that equality plus the submodule's cleanliness, alongside
+            the NEMU checkout's own pin.
         </p>
 
         <h2>Deploy and the derived registry</h2>
@@ -67,7 +71,13 @@
             and expected failures at deploy time, so the platform caveats are
             derived, never hard-coded in the bench. The same step writes
             <code>manifest.json</code>: the corpus as deployed, the per-unit
-            digests and the declared expectations.
+            digests and the declared expectations. The riscv64-nemu lane is the
+            deliberate exception: its deploy drives the bench's own platform
+            scripts (<code>benchmark/platform/riscv64-nemu-linux/</code>), which
+            derive their runset registry themselves, so
+            <code>derive_registry.py</code> is not in that path — the lane's
+            completeness gate compares the run's record set against that deployed
+            registry instead.
         </p>
 
         <h2>The opcode-extraction shim</h2>
@@ -94,6 +104,16 @@
             (runtime variables, boot logs, guest status). On the riscv64 lane the
             guest-side truth lives in the guest's own <code>test/sys_info.txt</code>,
             which carries only the pin lines, never the host <code>uname</code>.
+            The riscv64-nemu lane's extras are its run meta
+            (<code>meta.json</code>) and the deploy meta
+            (<code>meta.deploy.json</code> — corpus compiler, pinned inputs,
+            image/rootfs sha256s), and its <code>versions.txt</code> gains a
+            <code># nemu</code> section (binary path, <code>HEAD</code>,
+            <code>describe --always --dirty</code>, sha256); those two metas are
+            the authoritative provenance record there, because the venue's
+            guest-side <code># Bench tree</code> line always reads
+            <code>&lt;pin&gt;-dirty</code> — a bench-side artifact of its corpus
+            staging (see the README caveats).
         </p>
 
         <h2>Trust boundary</h2>
@@ -103,7 +123,12 @@
             design. The host lanes execute it unsandboxed with the invoking user's
             privileges — deliberately, and only on this workstation; the
             virtual-machine lanes are isolated by their disposable qemu guests,
-            each booted <code>-snapshot</code> from its pinned image. Do not
+            each booted <code>-snapshot</code> from its pinned image. The
+            riscv64-nemu lane is a third model: no corpus instruction executes as
+            a host process (NEMU interprets every one) and the guest's devices are
+            NEMU's models over the image the deploy assembled, so its host surface
+            is the NEMU binary and the lane's build files rather than the corpus.
+            Do not
             repoint a host lane at an untrusted registry or corpus without adding
             isolation first.
         </p>

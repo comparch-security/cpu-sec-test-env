@@ -6,12 +6,28 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
+# a09f570 carries the riscv64-nemu-linux platform - the bench's NEMU venue
+# (host-built corpus + riscv64 scheduler in a booted Linux guest under
+# XiangShan NEMU), consumed by the riscv64-nemu lane below.
 # 74195c4 carries the opcode-extraction platform fix: the cheri_riscv64
 # extractor branch, the $(OBJDUMP) pass-through, the extractor hardening and
 # the acc/read-func.cpp parse check (on top of c8c6000's sweep: the continue
 # fix, warning cleanup, catalog hardening, five .asm .size directives,
 # registry diff).
-BENCH_COMMIT=74195c4378e3cd97a7677555d66e473f19370962
+BENCH_COMMIT=a09f57091d9a933367a3fc31cc44e3846b3d5907
+
+# ---- NEMU venue pins (the riscv64-nemu lane) ----
+# NEMU_DIR/NEMU_BIN are a pair, overridden TOGETHER: NEMU_DIR defaults to the
+# sibling checkout of the workspace layout, RELATIVE to this repository root
+# (never an absolute machine path), and NEMU_BIN defaults under it.  A
+# checkout elsewhere overrides both (absolute paths included); the lane
+# scripts resolve relative values against the repository root.  NEMU_COMMIT
+# is a plain hard pin.  The binary's sha256 is recorded per stamp and
+# compared run-to-run, not pinned - an unpinned local rebuild stays possible
+# and is disclosed by the `-dirty` marker in the stamp's `# nemu` section.
+: "${NEMU_DIR:=../NEMU}"
+: "${NEMU_BIN:=$NEMU_DIR/build/riscv64-nemu-interpreter}"
+NEMU_COMMIT=ae1ec3cd869b9c5e1783af691538d5c26f37ee55
 
 # ---- cross toolchains (Ubuntu gcc-13 cross packages) ----
 RISCV64_CXX=riscv64-linux-gnu-g++-13
@@ -81,6 +97,7 @@ RESULTS_DIR=results
 STAMP_PACKAGES="qemu-system-riscv qemu-user qemu-user-binfmt gcc-13-riscv64-linux-gnu g++-13-riscv64-linux-gnu gcc-13-aarch64-linux-gnu g++-13-aarch64-linux-gnu binutils-riscv64-linux-gnu libhwasan0-arm64-cross"
 
 export BENCH_COMMIT
+export NEMU_DIR NEMU_BIN NEMU_COMMIT
 export RISCV64_CXX RISCV64_CC RISCV64_AS RISCV64_OBJDUMP
 export AARCH64_CXX AARCH64_CC AARCH64_AS AARCH64_OBJDUMP AARCH64_SYSROOT
 export QEMU_VERSION QEMU_SYSTEM_RISCV64 QEMU_AARCH64 QEMU_CPU_RISCV64

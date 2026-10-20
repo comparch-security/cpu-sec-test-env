@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="last-modified" content="2026-10-20">
+    <meta name="last-modified" content="2026-10-21">
     <title>Lanes | cpu-sec-test-env</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -47,6 +47,12 @@
                 <td>riscv64</td>
                 <td>System qemu guest; results over virtio-9p</td>
                 <td><code>qemu-system-riscv</code> + <code>qemu-system-data</code>, cross gcc-13</td>
+            </tr>
+            <tr>
+                <td><code>riscv64-nemu</code></td>
+                <td>riscv64 (emulated)</td>
+                <td>A Linux guest interpreted by XiangShan NEMU; results parsed from the guest console</td>
+                <td>a built <code>../NEMU</code> interpreter (<code>NEMU_DIR</code>/<code>NEMU_BIN</code>), cross gcc-13</td>
             </tr>
             <tr>
                 <td><code>cheri_riscv64</code></td>
@@ -106,6 +112,47 @@
             inside the guest image.
         </p>
 
+        <h2>riscv64-nemu</h2>
+        <p>
+            The bench's own NEMU venue, wrapped as a lane.
+            <code>prepare.sh</code> takes the lane lock, then preflights in one
+            block before any build: the bench submodule at the pinned commit
+            <em>and clean</em> (a leaked registry swap is named together with its
+            deferral), the resolved <code>NEMU_BIN</code>, and the NEMU
+            checkout's <code>HEAD</code> against <code>NEMU_COMMIT</code> — never
+            the binary's provenance, which is recorded instead (path,
+            <code>describe --always --dirty</code>, sha256) and compared
+            run-to-run. <code>NEMU_DIR</code>/<code>NEMU_BIN</code> are a
+            relative-default pair resolved against this repo's root. The deploy
+            then runs the venue's own <code>build-corpus.sh</code> and
+            <code>build-image.sh</code> with <code>OUT</code> under
+            <code>build/riscv64-nemu/</code>, unsetting
+            <code>ARCH</code>/<code>MAKEFLAGS</code> first so the scheduler's
+            child makes do not inherit this dispatcher's lane name, and records
+            the runset it built. <code>run.sh</code> requires that runset (an
+            explicit mismatch fails naming both), boots the image under the
+            pinned NEMU with <code>NEMU_TIMEOUT</code> forwarded so the platform
+            diagnoses its own boot timeout first, and supervises both legs as
+            their own sessions with the lane-lock fd closed
+            (<code>9&gt;&amp;-</code>), so the lane's own bound owns the kill
+            rather than the outer <code>timeout</code>: the TERM/124 kill sweeps
+            the whole session (<code>sid == $LEG_PID</code>, SIGKILL for whatever
+            survives), which reaches the platform's inner
+            <code>timeout NEMU</code> group too, so no descendant outlives the
+            lane or holds its lock. Results are extracted by parsing
+            the guest console (<code>===CSB-…===</code> markers), so
+            <code>boot.log</code> is part of every non-timeout stamp — the run
+            dir's own log when one was created, else the lane's platform log
+            copied under that name. The completeness gate
+            compares the run's record set against the deployed runset's derived
+            registry <em>before</em> any result file reaches the stamp: a gate
+            failure publishes a <code>boot.log</code> + <code>versions.txt</code>
+            evidence stamp only, and a timeout publishes nothing. The corpus
+            never executes as host code — NEMU interprets every guest
+            instruction, and the guest's devices are NEMU's models over the image
+            the deploy assembled.
+        </p>
+
         <h2>cheri_riscv64</h2>
         <p>
             The guest is a pinned, sha256-verified purecap CheriBSD disk image.
@@ -144,7 +191,7 @@
         </p>
     </main>
     <footer>
-        <p>Last updated: 2026-10-20 — keep in sync with <code>env.sh</code> and
+        <p>Last updated: 2026-10-21 — keep in sync with <code>env.sh</code> and
             <code>scripts/</code>.</p>
     </footer>
 </body>
