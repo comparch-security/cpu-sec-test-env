@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="last-modified" content="2026-10-20">
+    <title>Architecture | cpu-sec-test-env</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav>
+        <a href="content.html">Docs Home</a>
+    </nav>
+    <main>
+        <h1>Architecture</h1>
+
+        <p>
+            The environment is a single dispatcher around one mutable workdir. The
+            <code>Makefile</code> is the entry point
+            (<code>make ARCH=&lt;lane&gt; …</code>); it reads the few values its
+            recipes need from <code>env.sh</code> and dispatches to
+            <code>scripts/&lt;lane&gt;/</code> (the x86_64 lane is implemented inline in
+            the Makefile). The benchmark submodule is the
+            shared resource every lane mutates in turn — which is why every lane
+            entry point takes a lock.
+        </p>
+
+        <h2>The lane lock</h2>
+
+        <p>
+            Every lane entry point that mutates the bench worktree — the run and
+            clean paths, and the corpus-staging deploy legs — takes an advisory
+            <code>flock</code> on <code>build/.lane.lock</code> and writes the lane
+            name into it; a second concurrent lane fails fast with
+            <code>lane busy: &lt;holder&gt; holds build/.lane.lock</code>
+            (<code>dump</code> is the deliberate exception: it takes no lock). Every
+            lane <code>run</code> body is wrapped in an EXIT trap that, on every
+            outcome except a timeout, collects the lane's artifacts into
+            <code>results/&lt;lane&gt;/&lt;UTC-stamp&gt;/</code>, runs
+            <code>make -C benchmark clean</code> and asserts the submodule is
+            clean. A run that hits its timeout (exit 124) aborts without
+            publishing anything.
+        </p>
+
+        <h2>Pins</h2>
+
+        <p>
+            All pins live in <code>env.sh</code>: the bench commit, the toolchains,
+            qemu, the guest kernel and busybox, cheribuild and the CHERI images,
+            the roots and the timeouts. The Makefile and the lane scripts read
+            them; nothing else hard-codes them. The Makefile refuses to run with an
+            empty timeout or an empty build root rather than let a shell command
+            fail at the wrong moment, and the x86_64 <code>deploy</code> re-checks
+            that the submodule's <code>HEAD</code> equals the pinned bench commit.
+        </p>
+
+        <h2>Deploy and the derived registry</h2>
+
+        <p>
+            The system lanes' <code>deploy</code> stages what their run needs: the
+            riscv64 lane builds a byte-reproducible kernel + busybox + rootfs image,
+            and the CHERI lanes build their emulators and pinned disk images (a cold
+            deploy is a world build); the host lanes' prepare builds only the
+            scheduler, and the corpus is compiled on demand during the run. Deploy
+            also derives the lane's registry —
+            <code>scripts/common/derive_registry.py</code> declares per-lane skips
+            and expected failures at deploy time, so the platform caveats are
+            derived, never hard-coded in the bench. The same step writes
+            <code>manifest.json</code>: the corpus as deployed, the per-unit
+            digests and the declared expectations.
+        </p>
+
+        <h2>The opcode-extraction shim</h2>
+
+        <p>
+            The bench's per-function opcode extraction disassembles a freshly built
+            binary with an <code>objdump</code>. Every lane whose scheduler builds
+            cross-target units puts a shim directory first on <code>PATH</code>
+            (<code>scripts/common/shim.sh</code>) so that call resolves to the
+            lane-appropriate cross tool rather than the host's single-target
+            binutils; the CHERI lane points the same shim at the CTSRD SDK's
+            CHERI-capable <code>riscv64cheri-objdump</code>, whose bin directory is
+            deliberately off <code>PATH</code>.
+        </p>
+
+        <h2>Results and provenance</h2>
+
+        <p>
+            Each published stamp carries <code>results.json</code> and
+            <code>results.dat</code> (the scheduler's record set and its report),
+            <code>versions.txt</code> — the host-provenance record: the
+            <code>env.sh</code> pins, the dpkg versions of the prerequisite
+            packages and the host <code>uname</code> — and lane-specific extras
+            (runtime variables, boot logs, guest status). On the riscv64 lane the
+            guest-side truth lives in the guest's own <code>test/sys_info.txt</code>,
+            which carries only the pin lines, never the host <code>uname</code>.
+        </p>
+
+        <h2>Trust boundary</h2>
+
+        <p>
+            The corpus is trusted code from a trusted source, but adversarial by
+            design. The host lanes execute it unsandboxed with the invoking user's
+            privileges — deliberately, and only on this workstation; the
+            virtual-machine lanes are isolated by their disposable qemu guests,
+            each booted <code>-snapshot</code> from its pinned image. Do not
+            repoint a host lane at an untrusted registry or corpus without adding
+            isolation first.
+        </p>
+    </main>
+    <footer>
+        <p>Last updated: 2026-10-20 — keep in sync with the <code>Makefile</code>
+            and <code>scripts/</code>.</p>
+    </footer>
+</body>
+</html>

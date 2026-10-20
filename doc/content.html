@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="last-modified" content="2026-10-20">
+    <title>Documentation | cpu-sec-test-env</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav>
+        <a href="content.html">Docs Home</a>
+    </nav>
+    <main>
+        <h1>cpu-sec-test-env — Documentation</h1>
+
+        <p>
+            This repository builds and runs the cpu-sec-bench security benchmark on
+            every supported architecture from a single tree. The benchmark itself
+            lives in the <code>benchmark/</code> git submodule, consumed read-only
+            at the commit pinned in <code>env.sh</code>: every change a lane needs
+            is an environment change here, never an edit inside the submodule.
+        </p>
+
+        <p>
+            For installation and first-run instructions see <a href="../README.md">README.md</a>.
+            For the design record — every implementation cycle, its plan and its
+            findings — see <a href="../plans/">plans/</a>.
+        </p>
+
+        <h2>Lanes</h2>
+
+        <table>
+            <tr>
+                <th>Lane</th>
+                <th>Execution model</th>
+                <th>Results</th>
+            </tr>
+            <tr>
+                <td><code>x86_64</code></td>
+                <td>Native host processes — the reference lane</td>
+                <td><code>results/x86_64/&lt;stamp&gt;/</code></td>
+            </tr>
+            <tr>
+                <td><code>aarch64</code></td>
+                <td>Host-built corpus executed through the kernel's <code>binfmt_misc</code>
+                    handler under <code>qemu-aarch64</code>; <code>pa</code> / <code>bti</code> /
+                    <code>mte</code> variants run one at a time</td>
+                <td><code>results/aarch64[-&lt;variant&gt;]/&lt;stamp&gt;/</code></td>
+            </tr>
+            <tr>
+                <td><code>riscv64</code></td>
+                <td>Linux 6.18.56 guest under <code>qemu-system-riscv64</code>
+                    (<code>-M virt</code>); results extracted over a virtio-9p share</td>
+                <td><code>results/riscv64/&lt;stamp&gt;/</code></td>
+            </tr>
+            <tr>
+                <td><code>cheri_riscv64</code></td>
+                <td>Purecap CheriBSD guest under the CHERI qemu build — bbl firmware
+                    in M-mode plus an external kernel</td>
+                <td><code>results/cheri_riscv64/&lt;stamp&gt;/</code></td>
+            </tr>
+            <tr>
+                <td><code>aarch64-morello</code></td>
+                <td>Purecap CheriBSD guest under <code>qemu-system-morello</code> —
+                    UEFI and <code>loader(8)</code>, no external kernel</td>
+                <td><code>results/aarch64-morello/&lt;stamp&gt;/</code></td>
+            </tr>
+        </table>
+
+        <h2>Contents</h2>
+
+        <ul>
+            <li><a href="architecture.html">Architecture</a> — how the lane dispatcher
+                works: the lane lock, the pin doctrine, the derived registry, result
+                stamps and the trust boundary</li>
+            <li><a href="lanes.html">Lanes</a> — the per-lane reference: execution
+                paths, deploy/run mechanics and the load-bearing pins</li>
+        </ul>
+    </main>
+    <footer>
+        <p>Last updated: 2026-10-20</p>
+    </footer>
+</body>
+</html>

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="last-modified" content="2026-10-20">
+    <title>Lanes | cpu-sec-test-env</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav>
+        <a href="content.html">Docs Home</a>
+    </nav>
+    <main>
+        <h1>Lanes</h1>
+
+        <p>
+            The per-lane reference: what each lane executes, what its
+            <code>deploy</code> and <code>run</code> do, and which of its pins are
+            load-bearing. Operator-facing setup and the caveat ledger live in
+            <a href="../README.md">README.md</a>; this page is the maintainer's view.
+            Every pin named here lives in <code>env.sh</code> — treat that file as
+            authoritative; this page explains why each lane's pins matter.
+        </p>
+
+        <table>
+            <tr>
+                <th>Lane</th>
+                <th>Target</th>
+                <th>Execution path</th>
+                <th>Host prerequisites</th>
+            </tr>
+            <tr>
+                <td><code>x86_64</code></td>
+                <td>native</td>
+                <td>Host processes, directly</td>
+                <td>host <code>g++</code> + <code>objdump</code></td>
+            </tr>
+            <tr>
+                <td><code>aarch64</code> (+ <code>pa</code>/<code>bti</code>/<code>mte</code>)</td>
+                <td>aarch64</td>
+                <td><code>binfmt_misc</code> &rarr; <code>qemu-aarch64</code></td>
+                <td>registered binfmt handler (root-only), <code>qemu-user</code>, cross gcc-13, host <code>g++</code></td>
+            </tr>
+            <tr>
+                <td><code>riscv64</code></td>
+                <td>riscv64</td>
+                <td>System qemu guest; results over virtio-9p</td>
+                <td><code>qemu-system-riscv</code> + <code>qemu-system-data</code>, cross gcc-13</td>
+            </tr>
+            <tr>
+                <td><code>cheri_riscv64</code></td>
+                <td>riscv64 purecap</td>
+                <td>CHERI qemu guest; 9p shares for corpus and results</td>
+                <td>the five cheribuild packages, host <code>g++</code></td>
+            </tr>
+            <tr>
+                <td><code>aarch64-morello</code></td>
+                <td>Morello purecap</td>
+                <td>Morello qemu guest; 9p shares for corpus and results</td>
+                <td>the five cheribuild packages, host <code>g++</code></td>
+            </tr>
+        </table>
+
+        <h2>x86_64 — the reference lane</h2>
+        <p>
+            <code>deploy</code> is validation only: it checks the host toolchain
+            and that the benchmark submodule's <code>HEAD</code> equals the pinned
+            bench commit. <code>run</code> builds the bench and runs the scheduler
+            natively; the trap publishes <code>results.json</code>,
+            <code>results.dat</code> and <code>variables.json</code>.
+        </p>
+
+        <h2>aarch64 (+ pa / bti / mte)</h2>
+        <p>
+            <code>prepare.sh</code> builds the scheduler as a host binary for the
+            aarch64 target, plus the objdump shim and the sys_info header; the test
+            binaries are compiled during the run by the scheduler's own child makes
+            with the cross toolchain, and <code>run.sh</code> executes them through
+            the kernel's <code>binfmt_misc</code> handler under <code>qemu-aarch64</code> —
+            the bench's <code>RUN_PREFIX</code> is an environment injection, not a
+            command prefix, so binfmt is the execution route. The programmatic
+            variant flags (<code>enable_aarch64_pa</code>, <code>_bti</code>,
+            <code>_mte</code>) select one variant at a time and publish under
+            <code>results/aarch64-&lt;variant&gt;/</code>. The lane puts its shim
+            directory first on <code>PATH</code> and logs the resolved extraction
+            tool at run start.
+        </p>
+
+        <h2>riscv64</h2>
+        <p>
+            <code>deploy</code> builds the guest from pinned sources: the kernel
+            (sha256-verified tarball; the lane's fragment forces userspace vector
+            default-on), a static busybox, and a byte-reproducible rootfs image —
+            identity pins for the build metadata, normalized mtimes,
+            <code>LC_ALL=C</code> ordering and a device-independent cpio archive.
+            <code>run</code> boots the image under <code>qemu-system-riscv64</code>
+            (<code>-M virt</code>, OpenSBI's default firmware) with the pinned
+            <code>rva23s64</code> CPU model — every executable the distro cross
+            toolchain links declares the RVA23U64 profile, so a narrower model
+            would be a latent illegal instruction inside the guest's own libc —
+            and exports a share directory to the guest over virtio-9p (the result
+            stamp itself is created afterwards, from what the guest left there); the
+            guest init runs the prebuilt corpus and copies its results back. There is no
+            console parsing and no <code>dump</code> target: the binaries live
+            inside the guest image.
+        </p>
+
+        <h2>cheri_riscv64</h2>
+        <p>
+            The guest is a pinned, sha256-verified purecap CheriBSD disk image.
+            Boot is two-stage by necessity: the pinned <code>bbl</code> firmware
+            (<code>riscv-pk</code>) loads into M-mode and jumps to an external
+            <code>-kernel</code>; the CPU pin <code>rv64,sstc=off</code> is
+            load-bearing (the pinned firmware never sets
+            <code>menvcfg.STCE</code>, and without the pin the guest panics at
+            clock init). The corpus is handed in over a read-only virtio-9p share
+            and results are collected from a writable one; a host-side console
+            driver logs into the serial pty, synchronises on echo tokens, and
+            drives the run. Deploy splits its timeouts deliberately: the cheap
+            legs carry the lane deploy timeout while the emulator and image builds
+            carry the generous CHERI build timeout — an outer lane-deploy timeout
+            would fire in the middle of a world build.
+        </p>
+
+        <h2>aarch64-morello</h2>
+        <p>
+            The same class of pinned image, booted UEFI-style:
+            <code>edk2-aarch64-code.fd</code> plus <code>loader(8)</code> reads
+            the kernel from the disk image, so this lane takes <em>no</em>
+            <code>-kernel</code>. The machine is <code>virt</code> with GICv3; the
+            corpus and results travel over the same two virtio-9p shares, driven
+            by the same console driver.
+        </p>
+
+        <h2>Do not simplify</h2>
+        <p>
+            The two CHERI lanes do not boot the same way, on purpose. The riscv64
+            CHERI guest needs the firmware, the external kernel and the
+            <code>sstc=off</code> CPU pin together — there is no disk-only boot
+            transition that can succeed. And the riscv64 lane's CPU model is a
+            profile decision, not a preference: it follows the cross toolchain's
+            architecture tag, not the lane author's taste.
+        </p>
+    </main>
+    <footer>
+        <p>Last updated: 2026-10-20 — keep in sync with <code>env.sh</code> and
+            <code>scripts/</code>.</p>
+    </footer>
+</body>
+</html>
