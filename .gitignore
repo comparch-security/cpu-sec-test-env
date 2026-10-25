@@ -4,3 +4,7 @@ results/
 # Machine-local plans, reports, verification scripts.
 tmp/
 *.log
+# Python bytecode caches from running scripts/**/*.py.
+__pycache__/
+# Agent-tooling configuration: machine-local, ignored wholesale (2026-10-24 policy).
+.claude/

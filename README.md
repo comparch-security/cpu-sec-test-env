@@ -7,7 +7,9 @@ on every supported architecture from a single repository:
 - **aarch64** — the benchmark's own scheduler is a host binary; the corpus runs
   through the kernel's `binfmt_misc` handler under `qemu-aarch64`, with variants
   for pointer-authentication (`pa`), branch-target-identification (`bti`) and
-  memory-tagging (`mte`).
+  memory-tagging (`mte`). The `mte` variant's CPU pin is **not honoured** by this
+  host's emulator — a green `aarch64-mte` stamp carries no MTE information at
+  present; read *Known caveats* before using it.
 - **riscv64** — host-built corpus booted inside a Linux 6.18.56 guest under
   `qemu-system-riscv64` (`-M virt`), results extracted over a virtio-9p share.
 - **CHERI** — two real lanes, `cheri_riscv64` and `aarch64-morello`: purecap
@@ -181,12 +183,12 @@ All pins live in `env.sh` only — no script hard-codes them.
 
 | Item | Pin |
 |---|---|
-| bench commit | `a09f57091d9a933367a3fc31cc44e3846b3d5907` (the `riscv64-nemu` lane is the only stamp at this pin; the eight older lane names' stamps predate the bump — their measurements above were taken at `74195c4378e3cd97a7677555d66e473f19370962`, and the `riscv64` and `aarch64-morello` stamps at `c8c600066f4a1d0845d893bbfa24e46445e59b2b`, the pin where their caveats below were measured) |
+| bench commit | `f4c916a821a6f3fa7024a75b1a25304ae4555729` — all nine lane configurations carry a stamp at this pin (the 2026-10-24 uniform re-run); any stamp older than that predates it, and the caveats below say when a measurement is older |
 | NEMU | `../NEMU` @ `ae1ec3cd869b9c5e1783af691538d5c26f37ee55` — the workspace checkout; `NEMU_DIR`/`NEMU_BIN` are a relative-default pair, and the binary's sha256 is recorded and compared run-to-run, **not** pinned |
 | riscv64 toolchain | `riscv64-linux-gnu-{g++-13,gcc-13,as,objdump}` (Ubuntu gcc-13 cross 13.4.0) |
 | aarch64 toolchain / sysroot | `aarch64-linux-gnu-{g++-13,gcc-13,as,objdump}`, `/usr/aarch64-linux-gnu` |
 | QEMU | 10.2.1 (`qemu-system-riscv64`, `qemu-aarch64`) |
-| QEMU CPU models | riscv64 `rva23s64` (`-M virt`, `-bios default`, 256 MiB); aarch64 MTE `max,mte=on` |
+| QEMU CPU models | riscv64 `rva23s64` (`-M virt`, `-bios default`, 256 MiB); aarch64 MTE `max,mte=on` (declared, **not honoured** by this host's `qemu-aarch64` at present — see *Known caveats*) |
 | guest kernel | Linux 6.18.56 (kernel.org tarball, sha256-verified) |
 | busybox | 1.36.1 (static, sha256-verified) |
 | cheribuild | `db2f0360381e5fa2d50379e92ad119bb98db25c4` |
@@ -222,15 +224,21 @@ corpus without adding isolation first.
 
 ## Known caveats
 
-- **The riscv64-nemu lane's first stamp is green end-to-end.** All 246 records
-  run in the NEMU-emulated guest; exactly two rows lie outside the registry's
-  `expect-results` — the same two handoff rows the riscv64 lane carries (F2,
-  `cfi-jump-func-ra-from-heap-memcpy-implicit-arith` = 267, and the 255
-  expectation gap `cfi-return-to-parent-wrong-call-site-fakefunc`) — and exactly
-  two differ from the venue's own host-native reference (F2, and
-  `mts-access-after-reclaim-heap`, which records 0 where the reference records 1:
-  a legal pass verdict under the exit-code contract, never an anomaly). Two runs
-  at one image show zero per-record drift. Results are extracted by parsing the
+- **The riscv64-nemu lane runs all 246 records at the uniform pin.** The guest
+  exits 0 with the good-trap flag; three rows lie outside the registry's
+  `expect-results` at `f4c916a` — the same three the riscv64 lane carries
+  (`cfi-jump-func-ra-from-heap-memcpy-implicit-arith` = 267,
+  `cfi-call-mid-func` = 214, `cfi-return-to-peer-asmfunc` = 262) — and the
+  earlier 255 expectation gap (`cfi-return-to-parent-wrong-call-site-fakefunc`)
+  is closed: the record now delivers its declared `1`. The two riscv64 venues
+  agree with each other record for record and diverge from the `x86_64`
+  reference in the same eight records (seven `cfi` plus
+  `mts-access-after-reclaim-heap`, the latter a legal pass verdict under the
+  exit-code contract, never an anomaly). The three out-of-expect rows are
+  case-delivery defects, not this lane's: the 2026-10-25 intent check reproduced
+  each on the deployed corpus and delivered them to the bench tracker
+  (`defer-issue-cfi-delivery-defects`, `defer-issue-f2-267-not-closed`);
+  `214`/`262` are not declarable values. Results are extracted by parsing the
   guest console, so every non-timeout stamp carries console evidence as
   `boot.log` — the run dir's own log when one was created, else the lane's
   platform log copied under that name; a run whose completeness gate
@@ -267,31 +275,32 @@ corpus without adding isolation first.
   no CI gate: the lanes' verification lives in the machine-local plan scripts
   under `tmp/verification/` (step verifiers, acceptance and negative drivers)
   and in the lane runs' own stamps, all uncommitted by design.
-- **All 246 records run on the riscv64 lane.**
+- **All 246 records run on the riscv64 lane at the uniform pin.**
   The independent-assembly translation (`cfi-return-to-peer-asmfunc` and
   `cfi-return-to-parent-non-call-site-by-asmfunc`) is in the pinned bench
   commit, so the derived registry declares no skips and the corpus stages 145
-  units. Two riscv64 verdicts lie outside the registry's `expect-results` and
-  are handoff rows to the bench's return-code-delivery workstream, not skips:
-  `cfi-jump-func-ra-from-heap-memcpy-implicit-arith` (267) and
-  `cfi-return-to-parent-wrong-call-site-fakefunc` (255). The sweep's
-  opcode-extraction fix is lane-confirmed at `74195c43` (the pre-bump pin): `acc-read-func` exits 0
-  (before the sweep it exited 1 — the extractor matched the translated
-  `assembly_helper` symbol and wrote an empty side file), and
-  `mss-write-by-stack-pointer` (1) is declared in the registry's
-  `expect-results` at this pin.
-- **The two lane deviations recorded at the previous pin are closed at that
-  pin** (measured at `74195c43`; the eight older lane names' stamps predate the
-  `a09f570` bump). Both were bench-side defects in the opcode-extraction path (deferrals
+  units. Three riscv64 verdicts lie outside the registry's `expect-results` at
+  `f4c916a` — `cfi-jump-func-ra-from-heap-memcpy-implicit-arith` (267),
+  `cfi-call-mid-func` (214) and `cfi-return-to-peer-asmfunc` (262) — all three
+  case-delivery defects under the 2026-10-25 intent check, delivered bench-side
+  (see the riscv64-nemu caveat above); the earlier
+  `cfi-return-to-parent-wrong-call-site-fakefunc` (255) row is closed by the
+  contract (it delivers its declared `1`). The sweep's opcode-extraction fix
+  stays lane-confirmed at this pin: `acc-read-func` exits 0 (before the sweep it
+  exited 1 — the extractor matched the translated `assembly_helper` symbol and
+  wrote an empty side file), and `mss-write-by-stack-pointer` (1) is declared in
+  the registry's `expect-results`.
+- **The two lane deviations recorded at the pre-uniform pin are closed.**
+  (Measured at `74195c43`, the pin before the `a09f570`/`f4c916a` bumps; the
+  2026-10-24 uniform re-run reconfirms both at `f4c916a`.) Both were bench-side
+  defects in the opcode-extraction path (deferrals
   `cheri-riscv64-opcode-extraction-deploy-abort` and
-  `aarch64-func-opcode-extraction-host-objdump`), fixed in the pinned bench and
-  consumed by this cycle's re-runs: the `cheri_riscv64` lane deploys and stamps
-  (its corpus build routes the extraction through the SDK's own CHERI
-  `riscv64cheri-objdump`), and the four aarch64 host lanes' `acc-read-func`
-  exits 0 — it was recorded not-built (`1025`) at the previous pin — with the
-  extraction tool and the shim's bare-`objdump` PATH entry both named in each
-  lane's run log. The five re-run lanes' stamps carry the evidence; the
-  `riscv64` and `aarch64-morello` stamps predate the bump and are unchanged.
+  `aarch64-func-opcode-extraction-host-objdump`), fixed in the pinned bench: the
+  `cheri_riscv64` lane deploys and stamps (its corpus build routes the
+  extraction through the SDK's own CHERI `riscv64cheri-objdump`), and the four
+  aarch64 host lanes' `acc-read-func` exits 0 — it was recorded not-built
+  (`1025`) at the earlier pin — with the extraction tool and the shim's
+  bare-`objdump` PATH entry both named in each lane's run log.
 - **The CHERI lanes run the strict corpus.**
   Both boot their pins and run the corpus end-to-end over virtio-9p. The
   independent-assembly translation is in the pinned bench, so the corpus builds
@@ -300,10 +309,17 @@ corpus without adding isolation first.
   lane's derived registry with a reason (`acc-get-frame-size`,
   `mss-write-by-stack-pointer` on `cheri_riscv64`; `cfi-call-mid-func` on
   `aarch64-morello`). Verdicts outside the registry's `expect-results` are
-  recorded as handoff rows for the bench sweep, never skipped. At `74195c43` the
-  `cheri_riscv64` lane deploys and stamps; its corpus build routes the
-  extraction through the SDK's CHERI objdump (see the closed-deviations caveat
-  above).
+  recorded as handoff rows for the bench, never skipped: at the uniform pin
+  `cheri_riscv64` records one (`cfi-call-mid-func` = 50) and `aarch64-morello`
+  one (`cfi-return-without-call` = 260), both classified by the 2026-10-25
+  intent check (the first is the same case-delivery defect the riscv64 venues
+  show as 214; the second is held for one guest-side observation before any
+  declaration). One `cheri_riscv64` row is *declared but hollow*:
+  `cfi-return-without-call` records its declared `1` without attempting the
+  attack, because the lane records no `frame-size` and the record's
+  `-vframe-size` token stays literal — delivered bench-side with the same
+  findings. The `cheri_riscv64` lane's corpus build routes the extraction
+  through the SDK's CHERI objdump (see the closed-deviations caveat above).
   `scripts/cheri/dialect_probe.sh` remains available and still records
   the raw dialect probe into `results/cheri/probe-<date>.json`.
 - **The two CHERI lanes do not boot the same way, on purpose.** riscv64 loads
@@ -333,9 +349,24 @@ corpus without adding isolation first.
   riscv64 lane's image is qemu-virt-only by decision, not NEMU-bootable; the NEMU
   route is `riscv64-nemu`, which builds its own image through the venue's
   platform scripts under `benchmark/platform/riscv64-nemu-linux/`.
-- **`tmp/` is machine-local** (untracked): plans, reports and verification
-  scripts live there by repo convention and are re-runnable artifacts, not
-  tracked deliverables.
+- **The aarch64-mte lane's MTE claim is not backed by live evidence.**
+  `env.sh` pins `QEMU_CPU_AARCH64_MTE=max,mte=on` and the lane writes that model
+  into its stamp header, but this host's `qemu-aarch64` 10.2.1 rejects the value
+  outright (`can't apply global max-arm-cpu.mte=on: Property 'max-arm-cpu.mte'
+  not found`), while the lane's 246 verdicts are identical to the plain
+  `aarch64` lane's, record for record — so the model was not in effect for the
+  executions it published, and a green `aarch64-mte` stamp carries **no MTE
+  information**. The header line is written from the pin
+  (`scripts/aarch64/prepare.sh`), never observed. Read the variant as "an
+  `armv8.5-a+memtag` `-fsanitize=hwaddress` build of the corpus, executed
+  without tag enforcement" until a new env cycle either makes the pin real or
+  drops the claim. Both MTE rider checks (the `RT_SICODE_MTESERR` predicate and
+  `SA_EXPOSE_TAGBITS` with a tagged `si_addr`) are unprovable on this lane and
+  recorded as such, never green (deferral `mte-lane-pin-not-in-effect`).
+- **`.claude/` is machine-local and ignored wholesale.** Agent-tooling
+  configuration in the repo root is machine-local by the 2026-10-24 policy:
+  `.gitignore` covers it alongside `build/`, `results/` and `tmp/`. Unlike the
+  sibling bench repository, this repo does not track a `.claude/settings.json`.
 
 ### Historical note
 

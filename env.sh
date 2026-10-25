@@ -6,6 +6,7 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
+# f4c916a: declared expect-results meanings; fixes F2/267 at its source.
 # a09f570 carries the riscv64-nemu-linux platform - the bench's NEMU venue
 # (host-built corpus + riscv64 scheduler in a booted Linux guest under
 # XiangShan NEMU), consumed by the riscv64-nemu lane below.
@@ -14,7 +15,7 @@
 # the acc/read-func.cpp parse check (on top of c8c6000's sweep: the continue
 # fix, warning cleanup, catalog hardening, five .asm .size directives,
 # registry diff).
-BENCH_COMMIT=a09f57091d9a933367a3fc31cc44e3846b3d5907
+BENCH_COMMIT=f4c916a821a6f3fa7024a75b1a25304ae4555729
 
 # ---- NEMU venue pins (the riscv64-nemu lane) ----
 # NEMU_DIR/NEMU_BIN are a pair, overridden TOGETHER: NEMU_DIR defaults to the

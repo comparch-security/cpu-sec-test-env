@@ -30,8 +30,9 @@ CheriBSD lanes, cheri_riscv64 and aarch64-morello. The benchmark itself lives in
   tracked `configure.json` for the build's duration and trap-restores it — the lane never
   authors an in-submodule change, and its deploy preflight and post-assert guard that swap.
 - **Never commit generated or machine-local trees.** `build/` and `results/` are
-  generated; `tmp/` (plans, reports, verification scripts) is machine-local. All three
-  are gitignored.
+  generated; `tmp/` (plans, reports, verification scripts) and `.claude/`
+  (agent-tooling configuration, ignored wholesale by the 2026-10-24 policy) are
+  machine-local. All four are gitignored.
 - **Deferred issues live as `./tmp/reports/defer-issue-*.json`** — presence means open.
   Record them with `/defer-issue` and retire them through `/update-and-commit`; never
   create or delete a report by hand.
