@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="last-modified" content="2026-10-25">
+    <meta name="last-modified" content="2026-10-26">
     <title>Lanes | cpu-sec-test-env</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -93,20 +93,73 @@
             tool at run start.
         </p>
         <p>
-            <strong>The <code>mte</code> variant's CPU pin is not in effect.</strong>
-            <code>env.sh</code>'s <code>max,mte=on</code> is rejected outright by
-            this host's <code>qemu-aarch64</code> 10.2.1 (the model has no such
-            property), so if the pin had reached the executions every case would
-            have died before starting; instead the variant's 246 verdicts equal
-            the plain lane's, record for record, and its stamp header states the
-            pin rather than an observation (<code>prepare.sh</code> writes it from
-            <code>env.sh</code>). Until a follow-up env cycle either makes the pin
-            real or drops the claim, read the variant as an
-            <code>armv8.5-a+memtag</code> <code>-fsanitize=hwaddress</code> build
-            executed <em>without</em> tag enforcement, and never read a green
-            <code>aarch64-mte</code> stamp as MTE evidence. The two rider checks
-            that presuppose tag enforcement are unprovable on this lane and are
-            filed as such, not marked green.
+            <strong>Every aarch64-family stamp before 2026-10-25 is a
+            non-execution record.</strong> <code>env.sh</code> used to export
+            <code>QEMU_VERSION</code>, and this venue's <code>qemu-aarch64</code>
+            reads that name itself: for any value it printed its version banner
+            and exited 0 before parsing <code>-cpu</code> and before loading a
+            guest, so every case of every stamp from 2026-10-13 to 2026-10-24
+            "ran" as a banner print and the scheduler recorded <code>0</code>.
+            The version pin is renamed (<code>QEMU_PIN_VERSION</code>) and no
+            longer exported, and <code>prepare.sh</code>'s binfmt smoke asserts
+            the guest loader's own output rather than an exit code, so a
+            zero-execution route fails the deploy instead of publishing a stamp.
+        </p>
+        <p>
+            <strong>The <code>pa</code> and <code>mte</code> variants each
+            request a CPU model, and for <code>pa</code> the request is
+            load-bearing.</strong> Both pin <code>QEMU_CPU=max</code> — the
+            venue's default model <em>plus</em> PAuth. <code>max</code> is not
+            the default: left unset, this <code>qemu-aarch64</code> behaves as
+            <code>max,pauth=off</code> (byte-identical HWCAP), so the plain lane
+            and <code>bti</code> need no request while the <code>pa</code> lane's
+            <code>retaa</code> epilogue (<code>-march=armv8.3-a+pauth
+            -mbranch-protection=pac-ret</code>) raises SIGILL without one — its
+            first really-executing stamp (dated snapshot, 2026-10-25) drowned in
+            <code>256+4</code>, and the pinned request removed that class
+            entirely. <code>prepare.sh</code> executes a lane-representative
+            build under the request at deploy — a PAC-ret probe for
+            <code>pa</code>, an <code>-fsanitize=hwaddress</code> program for
+            <code>mte</code> — so a request the venue cannot honour fails the
+            deploy rather than every case. The <code>mte</code> smoke's
+            acceptance is two-outcome on purpose: the program's own line is the
+            primary proof, and the runtime's <code>99</code> with a sanitizer
+            report is the pre-output fallback, because qemu-user cannot run the
+            sanitizer's LeakSanitizer leg (a clean exit is not this venue's
+            shape). The <code>bti</code> lane deliberately has no leg: BTI
+            hints execute as NOPs on a model without FEAT_BTI, so nothing can
+            fault and a leg would assert nothing. The <code>mte</code> lane's old spelling
+            <code>max,mte=on</code> was rejected outright by this
+            <code>qemu-aarch64</code> (no model has that property) and never
+            reached a guest; under the current request the guest reports
+            <code>HWCAP2_MTE</code>, a tag check on a <code>PROT_MTE</code>
+            mapping faults with <code>si_code 9</code> (the
+            <code>RT_SICODE_MTESERR</code>-class predicate), and the
+            <code>-fsanitize=hwaddress</code> build aborts with the HWASan
+            runtime's <code>99</code> on the tag-touching cases — the
+            <code>mte</code> stamps are the only aarch64 stamps carrying that
+            class. Each stamp records both the request and the observation
+            (<code># CPU request:</code> beside <code># CPU observation:</code>),
+            so a stamp says what was in effect, never what was intended. The
+            request-less lanes (<code>aarch64</code>, <code>aarch64-bti</code>)
+            clear an ambient <code>QEMU_CPU</code> outright rather than
+            inheriting one, and both scripts drop an inherited
+            <code>QEMU_VERSION</code>, so the recorded <code>unset</code> is
+            the truth and not an assumption.
+        </p>
+        <p>
+            <strong>One <code>pa</code> class is a calibration limitation, not a
+            defence observation.</strong> The bench's RA-offset producers scan
+            the stack with a raw frame compare, which cannot match a PAC-signed
+            saved LR: the producer stores nothing, and ten return-hijack records
+            fall back to their documented guard and deliver the shared
+            <code>1</code> — a precondition failure that their declared
+            expectation hides from a per-record classification. The mechanism is
+            probed under the lane's own flags (the frame slot reads
+            <code>0x007b…</code>, and XPACI strips it back to the label), and the
+            fix is bench-side: standalone deferral
+            <code>aarch64-pa-calibration-cascade</code>. Do not read those ten
+            <code>1</code>s as PAuth evidence.
         </p>
 
         <h2>riscv64</h2>
@@ -207,7 +260,7 @@
         </p>
     </main>
     <footer>
-        <p>Last updated: 2026-10-25 — keep in sync with <code>env.sh</code> and
+        <p>Last updated: 2026-10-26 — keep in sync with <code>env.sh</code> and
             <code>scripts/</code>.</p>
     </footer>
 </body>

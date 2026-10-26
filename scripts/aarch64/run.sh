@@ -55,24 +55,49 @@ DEST="$RESULTS_DIR/$LANE/$STAMP"
 cleanup() {
   rc=$?
   set +e
+  collect_rc=0
   if [ "$rc" -eq 124 ]; then
     echo "aarch64 lane ($LANE) aborted on timeout (124): publishing nothing" >&2
   else
     mkdir -p "$DEST"
+    # variables.json is legitimately absent on the mte lane (no set-var
+    # producer survives the HWASan build), so absence is not a collection
+    # failure; a FAILED copy is, and names the artifact.
     for f in results.json results.dat variables.json; do
-      [ -f "benchmark/$f" ] && cp -f "benchmark/$f" "$DEST/"
+      [ -f "benchmark/$f" ] || continue
+      cp -f "benchmark/$f" "$DEST/" || {
+        echo "ERROR: could not collect benchmark/$f into $DEST" >&2
+        collect_rc=1
+      }
     done
-    ENABLE_FLAG="$ENABLE_FLAG" bash scripts/common/version_stamp.sh "$LANE" "$DEST/versions.txt"
-    echo "collected $LANE lane artifacts into $DEST"
+    if ! ENABLE_FLAG="$ENABLE_FLAG" bash scripts/common/version_stamp.sh "$LANE" "$DEST/versions.txt" ||
+       [ ! -s "$DEST/versions.txt" ]; then
+      echo "ERROR: version_stamp.sh did not write $DEST/versions.txt" >&2
+      collect_rc=1
+    fi
+    if [ "$collect_rc" -eq 0 ]; then
+      echo "collected $LANE lane artifacts into $DEST"
+    else
+      echo "ERROR: the stamp in $DEST is INCOMPLETE (see the errors above)" >&2
+    fi
   fi
   make -C benchmark clean >/dev/null 2>&1
   assert_rc=0
-  if [ -n "$(git -C benchmark status --short)" ]; then
+  # A failing git is not a clean tree: an absent binary, a broken .git, a held
+  # index.lock or a dubious-ownership refusal yields empty output that would
+  # otherwise read as "clean".  Only rc 0 with empty output means clean.
+  dirty=$(git -C benchmark status --short)
+  git_rc=$?
+  if [ "$git_rc" -ne 0 ]; then
+    echo "ERROR: cannot verify the benchmark submodule is clean: 'git -C benchmark status --short' failed (rc=$git_rc)" >&2
+    assert_rc=1
+  elif [ -n "$dirty" ]; then
     echo "ERROR: benchmark submodule left dirty after clean:" >&2
-    git -C benchmark status --short >&2
+    printf '%s\n' "$dirty" >&2
     assert_rc=1
   fi
   if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+  if [ "$collect_rc" -ne 0 ]; then exit "$collect_rc"; fi
   exit "$assert_rc"
 }
 trap cleanup EXIT
@@ -98,17 +123,30 @@ export QEMU_LD_PREFIX="$AARCH64_SYSROOT"
 # The lane's MAKEFLAGS - MUST match the composition in prepare.sh (the
 # sys_info header records the same string).  Command-line strength for the
 # scheduler's child makes: CXX resolves to aarch64-linux-gnu-g++-13 (the
-# env.sh AARCH64_CXX pin).  For the MTE lane QEMU_CPU=max,mte=on (the env.sh
-# QEMU_CPU_AARCH64_MTE pin) rides the environment through binfmt into
-# qemu-aarch64.
+# env.sh AARCH64_CXX pin).  The CPU request (the same rule prepare.sh applies):
+# for the MTE lane QEMU_CPU=max (the env.sh QEMU_CPU_AARCH64_MTE pin - the
+# venue's default model plus PAuth, pinned so the lane's claim is legible; it
+# already advertises HWCAP2_MTE and enforces tag checks, and unlike the pa pin
+# it is not load-bearing) and for the PA lane QEMU_CPU=max (the env.sh
+# QEMU_CPU_AARCH64_PA pin - a PAuth-capable model; the default model has no
+# FEAT_PAuth and the lane's retaa epilogue would SIGILL).  Both ride the
+# environment through binfmt into qemu-aarch64; prepare.sh runs the same request
+# through its binfmt smokes, so a pin this emulator rejects - or cannot execute
+# the lane's own build class under - fails the deploy instead of every case.
+# The request-less lanes clear an ambient QEMU_CPU instead of inheriting it,
+# and QEMU_VERSION is dropped outright: an inherited value makes qemu-aarch64
+# print its banner and exit 0 before parsing -cpu or loading any guest.
 mf="ARCH=$ARCH CXX=$AARCH64_CXX ASM=$AARCH64_AS OBJDUMP=$AARCH64_OBJDUMP"
 if [ -n "$ENABLE_FLAG" ]; then
   mf="$mf $ENABLE_FLAG=yes"
 fi
 export MAKEFLAGS="$mf"
-if [ "$LANE" = aarch64-mte ]; then
-  export QEMU_CPU="$QEMU_CPU_AARCH64_MTE"
-fi
+unset QEMU_VERSION
+case "$LANE" in
+  aarch64-mte) export QEMU_CPU="$QEMU_CPU_AARCH64_MTE" ;;
+  aarch64-pa)  export QEMU_CPU="$QEMU_CPU_AARCH64_PA" ;;
+  *)           unset QEMU_CPU ;;
+esac
 
 # Subshell cd: the EXIT trap must fire with cwd at the repo root, or every
 # relative path in it (results/, benchmark/$f, make -C benchmark) resolves

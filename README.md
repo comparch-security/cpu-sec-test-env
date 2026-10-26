@@ -7,9 +7,17 @@ on every supported architecture from a single repository:
 - **aarch64** — the benchmark's own scheduler is a host binary; the corpus runs
   through the kernel's `binfmt_misc` handler under `qemu-aarch64`, with variants
   for pointer-authentication (`pa`), branch-target-identification (`bti`) and
-  memory-tagging (`mte`). The `mte` variant's CPU pin is **not honoured** by this
-  host's emulator — a green `aarch64-mte` stamp carries no MTE information at
-  present; read *Known caveats* before using it.
+  memory-tagging (`mte`). The `pa` variant requests an explicit CPU model
+  (`QEMU_CPU=max` — this venue's default model *plus* PAuth), and for `pa` that
+  request is what makes its build executable here at all: the default model has
+  no PAuth, and the lane's PAC-ret epilogue faults without it. The `mte` variant
+  requests the same model to make its claim explicit — the default already
+  advertises MTE, and the old `max,mte=on` spelling was rejected outright, so it
+  had never reached a guest. Every
+  aarch64-family stamp **before 2026-10-25** is a non-execution record: an
+  exported `QEMU_VERSION` made each case print the emulator's version and exit 0,
+  so those stamps carry no test information (see *Known caveats* before comparing
+  anything against them).
 - **riscv64** — host-built corpus booted inside a Linux 6.18.56 guest under
   `qemu-system-riscv64` (`-M virt`), results extracted over a virtio-9p share.
 - **CHERI** — two real lanes, `cheri_riscv64` and `aarch64-morello`: purecap
@@ -144,7 +152,9 @@ build/<lane>/               lane build trees
                             (the image manifest and the derived corpus manifest live under
                              build/, not in results/)
 results/<lane>/<UTC-stamp>/ results.json  results.dat  versions.txt
-                            (+ variables.json on x86_64 and riscv64;
+                            (+ variables.json on x86_64, riscv64, and the
+                             aarch64 family except `aarch64-mte` — its set-var
+                             producer does not survive the HWASan build;
                              + boot.log and guest-status.txt on riscv64)
 results/cheri/probe-<date>.json   CHERI dialect probe evidence
 build/cheri/                CHERI lane build root (sources, SDK, emulators,
@@ -183,12 +193,12 @@ All pins live in `env.sh` only — no script hard-codes them.
 
 | Item | Pin |
 |---|---|
-| bench commit | `f4c916a821a6f3fa7024a75b1a25304ae4555729` — all nine lane configurations carry a stamp at this pin (the 2026-10-24 uniform re-run); any stamp older than that predates it, and the caveats below say when a measurement is older |
+| bench commit | `47d6f9d0b99744d36bd857f6da7334036ce215c3` — the four `aarch64` variants carry stamps at this pin (2026-10-26 re-stamp); every other lane's newest stamp is at the previous pin `f4c916a821a6f3fa7024a75b1a25304ae4555729` (the 2026-10-24 uniform re-run) and therefore predates it — the riscv64-family re-stamp at this pin is a named successor, and the caveats below say when a measurement is older |
 | NEMU | `../NEMU` @ `ae1ec3cd869b9c5e1783af691538d5c26f37ee55` — the workspace checkout; `NEMU_DIR`/`NEMU_BIN` are a relative-default pair, and the binary's sha256 is recorded and compared run-to-run, **not** pinned |
 | riscv64 toolchain | `riscv64-linux-gnu-{g++-13,gcc-13,as,objdump}` (Ubuntu gcc-13 cross 13.4.0) |
 | aarch64 toolchain / sysroot | `aarch64-linux-gnu-{g++-13,gcc-13,as,objdump}`, `/usr/aarch64-linux-gnu` |
 | QEMU | 10.2.1 (`qemu-system-riscv64`, `qemu-aarch64`) |
-| QEMU CPU models | riscv64 `rva23s64` (`-M virt`, `-bios default`, 256 MiB); aarch64 MTE `max,mte=on` (declared, **not honoured** by this host's `qemu-aarch64` at present — see *Known caveats*) |
+| QEMU CPU models | riscv64 `rva23s64` (`-M virt`, `-bios default`, 256 MiB); aarch64 `pa` and `mte` each request `QEMU_CPU=max` — the venue's default model **plus** PAuth (`max` is *not* the default: left unset, this `qemu-aarch64` behaves as `max,pauth=off`, byte-identical HWCAP). The `pa` request is load-bearing (its `retaa` epilogue SIGILLs without FEAT_PAuth) — see *Known caveats* |
 | guest kernel | Linux 6.18.56 (kernel.org tarball, sha256-verified) |
 | busybox | 1.36.1 (static, sha256-verified) |
 | cheribuild | `db2f0360381e5fa2d50379e92ad119bb98db25c4` |
@@ -291,16 +301,19 @@ corpus without adding isolation first.
   wrote an empty side file), and `mss-write-by-stack-pointer` (1) is declared in
   the registry's `expect-results`.
 - **The two lane deviations recorded at the pre-uniform pin are closed.**
-  (Measured at `74195c43`, the pin before the `a09f570`/`f4c916a` bumps; the
-  2026-10-24 uniform re-run reconfirms both at `f4c916a`.) Both were bench-side
-  defects in the opcode-extraction path (deferrals
+  (Measured at `74195c43`, the pin before the `a09f570`/`f4c916a` bumps.) Both
+  were bench-side defects in the opcode-extraction path (deferrals
   `cheri-riscv64-opcode-extraction-deploy-abort` and
   `aarch64-func-opcode-extraction-host-objdump`), fixed in the pinned bench: the
   `cheri_riscv64` lane deploys and stamps (its corpus build routes the
   extraction through the SDK's own CHERI `riscv64cheri-objdump`), and the four
   aarch64 host lanes' `acc-read-func` exits 0 — it was recorded not-built
   (`1025`) at the earlier pin — with the extraction tool and the shim's
-  bare-`objdump` PATH entry both named in each lane's run log.
+  bare-`objdump` PATH entry both named in each lane's run log. For the aarch64
+  half, the 2026-10-24 uniform re-run re-confirms nothing (those stamps are
+  non-execution records — see the family caveat above); the real evidence is the
+  fresh stamps, e.g. `results/aarch64/20261025T230008Z`: `acc-read-func` result
+  `0` on a 77,360-byte binary.
 - **The CHERI lanes run the strict corpus.**
   Both boot their pins and run the corpus end-to-end over virtio-9p. The
   independent-assembly translation is in the pinned bench, so the corpus builds
@@ -349,20 +362,64 @@ corpus without adding isolation first.
   riscv64 lane's image is qemu-virt-only by decision, not NEMU-bootable; the NEMU
   route is `riscv64-nemu`, which builds its own image through the venue's
   platform scripts under `benchmark/platform/riscv64-nemu-linux/`.
-- **The aarch64-mte lane's MTE claim is not backed by live evidence.**
-  `env.sh` pins `QEMU_CPU_AARCH64_MTE=max,mte=on` and the lane writes that model
-  into its stamp header, but this host's `qemu-aarch64` 10.2.1 rejects the value
-  outright (`can't apply global max-arm-cpu.mte=on: Property 'max-arm-cpu.mte'
-  not found`), while the lane's 246 verdicts are identical to the plain
-  `aarch64` lane's, record for record — so the model was not in effect for the
-  executions it published, and a green `aarch64-mte` stamp carries **no MTE
-  information**. The header line is written from the pin
-  (`scripts/aarch64/prepare.sh`), never observed. Read the variant as "an
-  `armv8.5-a+memtag` `-fsanitize=hwaddress` build of the corpus, executed
-  without tag enforcement" until a new env cycle either makes the pin real or
-  drops the claim. Both MTE rider checks (the `RT_SICODE_MTESERR` predicate and
-  `SA_EXPOSE_TAGBITS` with a tagged `si_addr`) are unprovable on this lane and
-  recorded as such, never green (deferral `mte-lane-pin-not-in-effect`).
+- **Every aarch64-family stamp before 2026-10-25 is a non-execution record.**
+  `env.sh` used to export `QEMU_VERSION`, and this venue's `qemu-aarch64` reads
+  that name itself: for any value it printed its version banner and exited 0
+  *before* parsing `-cpu` and before loading a guest. Every case of every stamp
+  from 2026-10-13 to 2026-10-24 — all four variants — therefore "ran" as a
+  banner print and the scheduler recorded `0` for all of them; those stamps
+  carry **no test information** and are not a baseline to compare against. The
+  version pin is renamed (`QEMU_PIN_VERSION`) and no longer exported, and the
+  deploy smoke now asserts the guest loader's own output instead of an exit
+  code, so a zero-execution route fails the deploy rather than publishing a
+  stamp. The request-less lanes (`aarch64`, `aarch64-bti`) also clear an
+  ambient `QEMU_CPU` rather than inheriting one, and both scripts drop an
+  inherited `QEMU_VERSION`, so the request a stamp records is the one that
+  executed. The family's first real executions are the `f4c916a`-era stamps
+  (`results/aarch64*/20261025T09*Z/`); the `47d6f9d`-era stamps
+  (`results/aarch64*/20261025T23*Z/`, produced late on 2026-10-25 UTC) re-base
+  the family on the bumped bench pin (see *Pins*).
+- **The `mte` variant really exercises MTE now.** The old request was spelled
+  `max,mte=on`, which this venue rejects outright (`can't apply global
+  max-arm-cpu.mte=on: Property 'max-arm-cpu.mte' not found`) and which therefore
+  never reached a guest; the request is now `max`, the venue's default model
+  **plus** PAuth. Under it the guest reports `HWCAP2_MTE`, a tag check on a
+  `PROT_MTE` mapping faults synchronously with `si_code 9` (the
+  `RT_SICODE_MTESERR`-class predicate), and the lane's `-fsanitize=hwaddress`
+  build aborts with the HWASan runtime's `99` on the tag-touching cases — the
+  `aarch64-mte` stamps are the only aarch64 stamps that carry that class. The
+  lane's deploy smoke executes the same build class under the request and
+  asserts the program's own line — deliberately not a clean exit, because
+  qemu-user cannot run the runtime's LeakSanitizer leg and it aborts with `99`
+  after the line. A
+  tagged `si_addr` is observable as well; on this emulator the tag comes back
+  whether or not `SA_EXPOSE_TAGBITS` is installed, which the rider records
+  rather than assuming the flag is what exposes it.
+- **The `pa` variant's CPU request is what makes it executable at all.** The
+  lane builds the corpus with `-march=armv8.3-a+pauth -mbranch-protection=pac-ret`,
+  so its function epilogues carry `retaa` — a real instruction, not a hint-space
+  NOP like BTI's — and the venue's default model has no FEAT_PAuth. Before the
+  request was pinned, that class dominated the lane's first really-executing
+  stamp (dated snapshot, 2026-10-25: `256+4` = SIGILL on 226 of 246 records);
+  with `QEMU_CPU=max` pinned it is gone, and the stamp's out-of-expect rows are
+  two named classes — the calibration cascade below, and
+  `cfi-return-without-call`'s undeclared `19` (a fault that matches no
+  registration under PAuth; a bench-side declaration successor, not a defence
+  observation). One of those classes is a
+  **calibration limitation, not a defence observation**: the bench's RA-offset
+  producers scan the stack with a raw compare, which cannot match a PAC-signed
+  saved LR, so ten return-hijack records deliver the shared `1` as a
+  precondition failure — recorded as the standalone deferral
+  `aarch64-pa-calibration-cascade` (bench-side fix). The deploy smoke executes
+  a PAC-ret probe under the lane's request, so a request this venue cannot
+  honour fails the deploy instead of poisoning the stamp.
+- **The bench pin moved on 2026-10-26; only the `aarch64` family was re-stamped.**
+  The bench's `47d6f9d` commit carries five case-delivery fixes, so the
+  `riscv64`, `riscv64-nemu` and CHERI lanes' newest stamps — and every statement
+  in this file measured "at `f4c916a`" — predate the pin. Their re-stamp under
+  `47d6f9d` is a named successor; the aarch64 family's 2026-10-26 stamps are the
+  only ones at the current pin, and the bench fixes' effect is visible there
+  (the `267` class the plain and `bti` lanes carried at `f4c916a` is gone).
 - **`.claude/` is machine-local and ignored wholesale.** Agent-tooling
   configuration in the repo root is machine-local by the 2026-10-24 policy:
   `.gitignore` covers it alongside `build/`, `results/` and `tmp/`. Unlike the

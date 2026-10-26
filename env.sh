@@ -6,7 +6,8 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-# f4c916a: declared expect-results meanings; fixes F2/267 at its source.
+# 47d6f9d: the delivery blocks are self-contained (f4c916a beneath it declared
+# the expect-results meanings and fixed F2/267 at its source).
 # a09f570 carries the riscv64-nemu-linux platform - the bench's NEMU venue
 # (host-built corpus + riscv64 scheduler in a booted Linux guest under
 # XiangShan NEMU), consumed by the riscv64-nemu lane below.
@@ -15,7 +16,7 @@
 # the acc/read-func.cpp parse check (on top of c8c6000's sweep: the continue
 # fix, warning cleanup, catalog hardening, five .asm .size directives,
 # registry diff).
-BENCH_COMMIT=f4c916a821a6f3fa7024a75b1a25304ae4555729
+BENCH_COMMIT=47d6f9d0b99744d36bd857f6da7334036ce215c3
 
 # ---- NEMU venue pins (the riscv64-nemu lane) ----
 # NEMU_DIR/NEMU_BIN are a pair, overridden TOGETHER: NEMU_DIR defaults to the
@@ -42,7 +43,14 @@ AARCH64_OBJDUMP=aarch64-linux-gnu-objdump
 AARCH64_SYSROOT=/usr/aarch64-linux-gnu
 
 # ---- qemu pins ----
-QEMU_VERSION=10.2.1
+# The emulator-version pin is deliberately NOT called QEMU_VERSION: qemu-user
+# reads that exact variable from its environment and, for ANY value, prints its
+# version banner and exits 0 before parsing -cpu and before loading a guest.  An
+# exported QEMU_VERSION in a lane child therefore turned every aarch64 case into
+# a banner print (21 void stamps, 2026-10-13..24, derived from the `# LIBC:`
+# banner census).  This pin is consumed by scripts/aarch64/prepare.sh's version
+# assertion only - never export it.
+QEMU_PIN_VERSION=10.2.1
 QEMU_SYSTEM_RISCV64=qemu-system-riscv64
 QEMU_AARCH64=qemu-aarch64
 # rva23s64: qemu 10.2.1's named RVA23 Linux-capable hart profile.  Ubuntu's
@@ -52,7 +60,28 @@ QEMU_AARCH64=qemu-aarch64
 # illegal-instruction in the guest's own libc.  rva23u64 is the whitelisted
 # fallback if the guest kernel mishandles an S-mode extension of rva23s64.
 QEMU_CPU_RISCV64=rva23s64
-QEMU_CPU_AARCH64_MTE=max,mte=on
+# The mte lane's CPU request: "max" is the venue's default model PLUS PAuth,
+# pinned explicitly so the lane's claim is legible.  max is NOT the default:
+# the unset default's HWCAP is byte-identical to QEMU_CPU=max,pauth=off
+# (hwcap=0x12ffffffb, paca=0 pacg=0), while max and any both give
+# hwcap=0x1effffffb (paca=1 pacg=1) - which is why the pa pin below is
+# load-bearing and this one is not (probe matrix 2026-10-25:
+# tmp/verification/2026-10-25-hwcap-pauth-probe).  It already
+# advertises HWCAP2_MTE and enforces tag checks (probe 2026-10-25).  The former
+# spelling max,mte=on is rejected outright by qemu 10.2.1 - no CPU model
+# accepts the mte property ("can't apply global max-arm-cpu.mte=on: Property
+# 'max-arm-cpu.mte' not found") - so it never reached a guest.
+QEMU_CPU_AARCH64_MTE=max
+# The pa lane's CPU request, and it is load-bearing: the corpus is built with
+# -march=armv8.3-a+pauth -mbranch-protection=pac-ret (bench Makefile), whose
+# epilogue retaa is a real instruction - on a CPU model without FEAT_PAuth it
+# raises SIGILL.  qemu-aarch64's default model has no PAuth (HWCAP_PACA=0);
+# "max" advertises it (paca=1 pacg=1) and executes the lane's build (probe
+# 2026-10-25).  Without this request 226 of 246 records of the lane's first
+# really-executing stamp were 256+SIGILL (2026-10-25).  prepare.sh additionally
+# smoke-executes a PAC-ret build under this request, so a request the venue
+# cannot honour fails the deploy instead of every case.
+QEMU_CPU_AARCH64_PA=max
 QEMU_BIOS_RISCV64=default
 QEMU_MACH_RISCV64=virt
 QEMU_MEM_RISCV64=256
@@ -101,8 +130,12 @@ export BENCH_COMMIT
 export NEMU_DIR NEMU_BIN NEMU_COMMIT
 export RISCV64_CXX RISCV64_CC RISCV64_AS RISCV64_OBJDUMP
 export AARCH64_CXX AARCH64_CC AARCH64_AS AARCH64_OBJDUMP AARCH64_SYSROOT
-export QEMU_VERSION QEMU_SYSTEM_RISCV64 QEMU_AARCH64 QEMU_CPU_RISCV64
-export QEMU_CPU_AARCH64_MTE QEMU_BIOS_RISCV64 QEMU_MACH_RISCV64 QEMU_MEM_RISCV64
+# QEMU_PIN_VERSION is deliberately absent: exporting it would be harmless only
+# until qemu-user grew a matching variable, and the version pin is a
+# prepare.sh-only consumer.
+export QEMU_SYSTEM_RISCV64 QEMU_AARCH64 QEMU_CPU_RISCV64
+export QEMU_CPU_AARCH64_MTE QEMU_CPU_AARCH64_PA
+export QEMU_BIOS_RISCV64 QEMU_MACH_RISCV64 QEMU_MEM_RISCV64
 export KERNEL_VERSION KERNEL_URL KERNEL_SHA256
 export BUSYBOX_VERSION BUSYBOX_URL BUSYBOX_SHA256
 export KBUILD_BUILD_TIMESTAMP KBUILD_BUILD_USER KBUILD_BUILD_HOST SOURCE_DATE_EPOCH
