@@ -39,7 +39,7 @@ die() { echo "morello/run ($LANE): $*" >&2; exit 1; }
 
 # ---- lane advisory lock ----
 mkdir -p "$BUILD_DIR"
-exec 9>"$BUILD_DIR/.lane.lock"
+exec 9>>"$BUILD_DIR/.lane.lock"
 if ! flock -n 9; then
   die "lane busy: $(cat "$BUILD_DIR/.lane.lock" 2>/dev/null || echo unknown) holds $BUILD_DIR/.lane.lock"
 fi
@@ -87,7 +87,7 @@ cleanup() {
         *) echo "morello/run: refusing out-of-share path $SHARE_OUT/$f" >&2 ;;
       esac
     done
-    ENABLE_FLAG="" bash scripts/common/version_stamp.sh "$LANE" "$DEST/versions.txt"
+    ENABLE_FLAG="" RUN_STATUS="$rc" bash scripts/common/version_stamp.sh "$LANE" "$DEST/versions.txt"
     {
       echo "emulator: $QEMU"
       echo "image: $IMAGE"

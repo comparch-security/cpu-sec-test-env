@@ -98,10 +98,14 @@ $(error select at most one of enable_aarch64_{pa,bti,mte}=yes (got: $(_AARCH64_S
   endif
 endif
 
-# The shared lane-lock body (advisory, fail-fast, names the holder).
+# The shared lane-lock body (advisory, fail-fast, names the holder).  The lock
+# file is append-opened so a contender never truncates the holder's name before
+# finding the lock taken; the name itself is written only after the lock is
+# held.  Recipes that pass the lock to a script set LANE_LOCK_INHERITED=1 and
+# leave fd 9 open for the child (flock is per open-file-description).
 define acquire_lane_lock
 	mkdir -p $(BUILD_DIR)
-	exec 9>$(BUILD_DIR)/.lane.lock
+	exec 9>>$(BUILD_DIR)/.lane.lock
 	if ! flock -n 9; then
 	  echo "lane busy: $$(cat $(BUILD_DIR)/.lane.lock 2>/dev/null || echo unknown) holds $(BUILD_DIR)/.lane.lock" >&2
 	  exit 1
@@ -130,25 +134,57 @@ run:
 	@set -e
 	$(call acquire_lane_lock,x86_64)
 	trap 'rc=$$?; set +e; \
+	  collect_rc=0; \
 	  if [ $$rc -ne 124 ]; then \
 	    dest=$(RESULTS_DIR)/x86_64/$$(date -u +%Y%m%dT%H%M%SZ); \
 	    mkdir -p "$$dest"; \
-	    for f in results.json results.dat variables.json; do \
-	      [ -f benchmark/"$$f" ] && cp -f benchmark/"$$f" "$$dest/"; \
+	    for f in results.json results.dat; do \
+	      if [ ! -f benchmark/"$$f" ]; then \
+	        echo "ERROR: required artifact benchmark/$$f is absent - the run did not produce it" >&2; \
+	        collect_rc=1; \
+	      elif [ ! -s benchmark/"$$f" ]; then \
+	        echo "ERROR: required artifact benchmark/$$f is empty" >&2; \
+	        collect_rc=1; \
+	      elif ! cp -f benchmark/"$$f" "$$dest/"; then \
+	        echo "ERROR: could not collect benchmark/$$f into $$dest" >&2; \
+	        collect_rc=1; \
+	      fi; \
 	    done; \
-	    bash scripts/common/version_stamp.sh x86_64 "$$dest/versions.txt"; \
-	    echo "collected x86_64 lane artifacts into $$dest"; \
+	    if [ -f benchmark/results.json ] && [ -s benchmark/results.json ] && \
+	       ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" benchmark/results.json 2>/dev/null; then \
+	      echo "ERROR: required artifact benchmark/results.json is not parseable JSON" >&2; \
+	      collect_rc=1; \
+	    fi; \
+	    if [ -f benchmark/variables.json ] && ! cp -f benchmark/variables.json "$$dest/"; then \
+	      echo "ERROR: could not collect benchmark/variables.json into $$dest" >&2; \
+	      collect_rc=1; \
+	    fi; \
+	    if ! RUN_STATUS="$$rc" bash scripts/common/version_stamp.sh x86_64 "$$dest/versions.txt" || \
+	       [ ! -s "$$dest/versions.txt" ]; then \
+	      echo "ERROR: version_stamp.sh did not write $$dest/versions.txt" >&2; \
+	      collect_rc=1; \
+	    fi; \
+	    if [ $$collect_rc -eq 0 ]; then \
+	      echo "collected x86_64 lane artifacts into $$dest"; \
+	    else \
+	      echo "ERROR: the stamp in $$dest is INCOMPLETE (see the errors above)" >&2; \
+	    fi; \
 	  else \
 	    echo "x86_64 lane aborted on timeout (124): publishing nothing" >&2; \
 	  fi; \
 	  make -C benchmark clean; \
 	  assert_rc=0; \
-	  if [ -n "$$(git -C benchmark status --short)" ]; then
-	    echo "ERROR: benchmark submodule left dirty after clean:" >&2
-	    git -C benchmark status --short >&2
-	    assert_rc=1
+	  dirty=$$(git -C benchmark status --short); git_rc=$$?; \
+	  if [ $$git_rc -ne 0 ]; then \
+	    echo "ERROR: cannot verify the benchmark submodule is clean: git status failed (rc=$$git_rc)" >&2; \
+	    assert_rc=1; \
+	  elif [ -n "$$dirty" ]; then \
+	    echo "ERROR: benchmark submodule left dirty after clean:" >&2; \
+	    printf "%s\n" "$$dirty" >&2; \
+	    assert_rc=1; \
 	  fi; \
 	  if [ $$rc -ne 0 ]; then exit $$rc; fi; \
+	  if [ $$collect_rc -ne 0 ]; then exit $$collect_rc; fi; \
 	  exit $$assert_rc' EXIT
 	make -C benchmark
 	(cd benchmark && timeout $(LANE_RUN_TIMEOUT) ./run-test exhausted-run)
@@ -173,8 +209,9 @@ deploy:
 
 run:
 	@set -e
-	ENABLE_FLAG=$(ENABLE_FLAG) bash scripts/aarch64/prepare.sh $(LANE_NAME)
-	ENABLE_FLAG=$(ENABLE_FLAG) bash scripts/aarch64/run.sh $(LANE_NAME)
+	$(call acquire_lane_lock,$(LANE_NAME))
+	ENABLE_FLAG=$(ENABLE_FLAG) LANE_LOCK_INHERITED=1 bash scripts/aarch64/prepare.sh $(LANE_NAME)
+	ENABLE_FLAG=$(ENABLE_FLAG) LANE_LOCK_INHERITED=1 bash scripts/aarch64/run.sh $(LANE_NAME)
 
 clean:
 	@set -e

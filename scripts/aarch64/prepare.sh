@@ -7,7 +7,9 @@ set -euo pipefail
 #     the pinned cross sysroot (loader present and runnable through binfmt;
 #     for the MTE lane the hwasan runtime resolvable; for the PA lane a build
 #     of the lane's own -march=armv8.3-a+pauth -mbranch-protection=pac-ret
-#     class executable under the lane's CPU request);
+#     class executable under the lane's CPU request; for the BTI lane the same
+#     for -march=armv8.5-a -mbranch-protection=bti, whose PAuth-implied xpaci
+#     needs a PAuth-capable model);
 #   - verifies the binfmt handler by READING
 #     /proc/sys/fs/binfmt_misc/qemu-aarch64 (exists, enabled, interpreter
 #     names the pinned qemu-aarch64) - never writes to the node;
@@ -47,6 +49,78 @@ cd "$ROOT"
 
 die() { echo "aarch64/prepare ($LANE): $*" >&2; exit 1; }
 
+# ---- pinned bench checkout: HEAD must be BENCH_COMMIT ----
+# Same invariant the x86_64 deploy and the nemu prepare already assert.  The
+# rc is checked too: a failing git must die naming the unverifiable state, never
+# pass as a valid pin.
+git_rc=0
+bench_head=$(git -C benchmark rev-parse HEAD) || git_rc=$?
+[ "$git_rc" -eq 0 ] ||
+  die "cannot verify the benchmark pin: 'git -C benchmark rev-parse HEAD' failed (rc=$git_rc)"
+[ "$bench_head" = "$BENCH_COMMIT" ] ||
+  die "benchmark submodule is at $bench_head but env.sh pins BENCH_COMMIT=$BENCH_COMMIT"
+
+# ---- the pinned bench Makefile: the smokes' class flags must be its class flags ----
+# The lane-representative smokes below compile a program of the corpus's own
+# build class, and the flags they use are the bench's, not this repo's: a smoke
+# that stands for a class the pinned Makefile no longer builds asserts nothing.
+# BENCH_MAKEFILE is the documented override (default benchmark/Makefile) so a
+# control can point at a modified copy without editing the submodule.
+BENCH_MAKEFILE=${BENCH_MAKEFILE:-benchmark/Makefile}
+PA_CLASS_FLAGS="-march=armv8.3-a+pauth -mbranch-protection=pac-ret"
+MTE_CLASS_FLAGS="-march=armv8.5-a+memtag -fsanitize=hwaddress"
+BTI_CLASS_FLAGS="-march=armv8.5-a -mbranch-protection=bti"
+
+# The class-flag tokens of a flag string (the fixed prefix set), one per line.
+class_flag_tokens() { # flags
+  local t
+  for t in $1; do
+    case "$t" in
+      -march=*|-mbranch-protection=*|-fsanitize=*) printf '%s\n' "$t" ;;
+    esac
+  done
+}
+
+# The class-flag-bearing lines (CXXFLAGS / OBJECT_CXXFLAGS) inside one lane's
+# ifdef block of the pinned Makefile; empty output when the block is absent.
+makefile_class_lines() { # ifdef-name
+  awk -v name="$1" '
+    $1 == "ifdef" && $2 == name { inb = 1; next }
+    inb && $1 == "endif"       { inb = 0; next }
+    inb && ($1 == "CXXFLAGS" || $1 == "OBJECT_CXXFLAGS") { print }
+  ' "$BENCH_MAKEFILE"
+}
+
+# Fail closed: an unreadable file, an absent block, a line with no class flags
+# or a token mismatch all refuse.  Both line kinds must be present and carry
+# exactly the smoke's class tokens, so dropping either one is caught.
+assert_bench_class_flags() { # lane ifdef-name flags
+  local lane=$1 name=$2 flags=$3 lines line kind want have have_cxx=0 have_obj=0
+  [ -r "$BENCH_MAKEFILE" ] ||
+    die "cannot read BENCH_MAKEFILE=$BENCH_MAKEFILE - refusing the $lane class-flag check"
+  lines=$(makefile_class_lines "$name") ||
+    die "cannot read the ifdef $name block of $BENCH_MAKEFILE - refusing the $lane class-flag check"
+  want=$(class_flag_tokens "$flags" | sort)
+  [ -n "$want" ] ||
+    die "the $lane smoke carries no class-flag tokens (looked for -march=/-mbranch-protection=/-fsanitize= in '$flags')"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    have=$(class_flag_tokens "$line" | sort)
+    [ -n "$have" ] || continue
+    [ "$have" = "$want" ] ||
+      die "class-flag drift in $BENCH_MAKEFILE (ifdef $name): '$(printf '%s' "$line" | sed 's/^[[:space:]]*//')' carries '$(printf '%s' "$have" | tr '\n' ' ')' but the $lane smoke builds with '$(printf '%s' "$want" | tr '\n' ' ')'"
+    # The recipe lines are indented; match on the leading variable name.
+    kind=${line#"${line%%[![:space:]]*}"}
+    case "$kind" in
+      CXXFLAGS*)        have_cxx=1 ;;
+      OBJECT_CXXFLAGS*) have_obj=1 ;;
+    esac
+  done <<< "$lines"
+  [ "$have_cxx" -eq 1 ] && [ "$have_obj" -eq 1 ] ||
+    die "the ifdef $name block of $BENCH_MAKEFILE carries no CXXFLAGS and OBJECT_CXXFLAGS class-flag pair - refusing the $lane class-flag check"
+  echo "aarch64/prepare ($lane): smoke class flags match $BENCH_MAKEFILE's ifdef $name block" >&2
+}
+
 # Defence in depth, before any qemu-aarch64 invocation: env.sh never exports
 # QEMU_VERSION, but an inherited one (the invoking shell, a wrapper) makes
 # qemu-aarch64 print its version banner and exit 0 for ANY value - before
@@ -55,12 +129,30 @@ die() { echo "aarch64/prepare ($LANE): $*" >&2; exit 1; }
 unset QEMU_VERSION
 
 # ---- lane advisory lock (released when this script exits) ----
+# The aarch64 `run` recipe holds the lock across both legs and passes the
+# descriptor down (LANE_LOCK_INHERITED=1): flock is per open-file-description,
+# so this script's own flock on a fresh descriptor would fail against the
+# recipe's own lock.  The marker is honoured only when fd 9 verifiably IS the
+# lane lock - it resolves to the lock file and flock -n succeeds on it - and a
+# spoofed marker with no held lock dies.  The descriptor is then closed so no
+# lane child (the scheduler, a corpus binary) inherits it.
 mkdir -p "$BUILD_DIR"
-exec 9>"$BUILD_DIR/.lane.lock"
-if ! flock -n 9; then
-  die "lane busy: $(cat "$BUILD_DIR/.lane.lock" 2>/dev/null || echo unknown) holds $BUILD_DIR/.lane.lock"
+LANE_LOCK="$BUILD_DIR/.lane.lock"
+if [ "${LANE_LOCK_INHERITED:-}" = 1 ]; then
+  fd9_target=$(readlink -f /proc/self/fd/9 2>/dev/null || true)
+  lock_target=$(readlink -f "$LANE_LOCK" 2>/dev/null || printf '%s\n' "$LANE_LOCK")
+  if [ -z "$fd9_target" ] || [ "$fd9_target" != "$lock_target" ] || ! flock -n 9; then
+    die "LANE_LOCK_INHERITED=1 but fd 9 is not the held lane lock $LANE_LOCK (marker spoofed or descriptor lost)"
+  fi
+  exec 9>&-
+else
+  # Append-open: a contender must never truncate the holder's name.
+  exec 9>>"$LANE_LOCK"
+  if ! flock -n 9; then
+    die "lane busy: $(cat "$LANE_LOCK" 2>/dev/null || echo unknown) holds $LANE_LOCK"
+  fi
+  printf '%s\n' "$LANE" > "$LANE_LOCK"
 fi
-printf '%s\n' "$LANE" > "$BUILD_DIR/.lane.lock"
 
 ARCH=aarch64
 ENABLE_FLAG=${ENABLE_FLAG:-}
@@ -91,6 +183,7 @@ loader="$AARCH64_SYSROOT/lib/ld-linux-aarch64.so.1"
 case "$LANE" in
   aarch64-mte) export QEMU_CPU="$QEMU_CPU_AARCH64_MTE" ;;
   aarch64-pa)  export QEMU_CPU="$QEMU_CPU_AARCH64_PA" ;;
+  aarch64-bti) export QEMU_CPU="$QEMU_CPU_AARCH64_BTI" ;;
   *)           unset QEMU_CPU ;;
 esac
 # The guest side of the smokes: run.sh exports the same prefix, and a
@@ -121,14 +214,17 @@ esac
 # venue cannot execute.  Each request-bearing lane therefore builds and runs a
 # program of its corpus's own class under its request, so an unusable request
 # fails the deploy instead of poisoning a stamp.
-# The bti lane deliberately has NO leg: -mbranch-protection=bti emits BTI
-# landing-pad hints, which a CPU model without FEAT_BTI executes as NOPs -
-# nothing can fault, so a leg there would assert nothing.  The pa leg exists
-# because retaa is a real instruction: the corpus is built with
-# -march=armv8.3-a+pauth -mbranch-protection=pac-ret (bench Makefile), and on
-# a model without FEAT_PAuth 226 of 246 records of the lane's first
-# really-executing stamp became 256+SIGILL (2026-10-25).
+# The pa leg exists because retaa is a real instruction: the corpus is built
+# with -march=armv8.3-a+pauth -mbranch-protection=pac-ret (bench Makefile), and
+# on a model without FEAT_PAuth 226 of 246 records of the lane's first
+# really-executing stamp became 256+SIGILL (2026-10-25).  The bti leg exists for
+# the same reason at bench f9e4ba7: -march=armv8.5-a implies PAuth, so the
+# bench's STRIP_PAC() emits xpaci, and a model without FEAT_PAuth SIGILLs on it
+# (five records read 260 in the 2026-10-27 stamp).  The bti hints themselves
+# remain NOPs on a non-BTI model - it is the PAuth the -march drags in that
+# faults - so the leg bears an xpaci and asserts it executes.
 if [ "$LANE" = aarch64-pa ]; then
+  assert_bench_class_flags "$LANE" enable_aarch64_pa "$PA_CLASS_FLAGS"
   pa_dir="tmp/aarch64-prepare-smoke/$LANE"
   mkdir -p "$pa_dir"
   cat > "$pa_dir/pa-smoke.c" <<'SMOKE_SRC'
@@ -140,9 +236,10 @@ int main(void) {
   return v == 42 ? 0 : 1;
 }
 SMOKE_SRC
-  "$AARCH64_CXX" -O1 -static -march=armv8.3-a+pauth -mbranch-protection=pac-ret \
+  # shellcheck disable=SC2086  # the class-flag string must word-split
+  "$AARCH64_CXX" -O1 -static $PA_CLASS_FLAGS \
     -o "$pa_dir/pa-smoke" "$pa_dir/pa-smoke.c" ||
-    die "pa smoke build failed ($AARCH64_CXX -march=armv8.3-a+pauth -mbranch-protection=pac-ret)"
+    die "pa smoke build failed ($AARCH64_CXX $PA_CLASS_FLAGS)"
   pa_out=$("$pa_dir/pa-smoke" 2>&1) || {
     pa_rc=$?
     die "pa smoke did not execute the lane's own build class under QEMU_CPU='${QEMU_CPU:-unset}' (rc=$pa_rc): $pa_out"
@@ -155,7 +252,56 @@ SMOKE_SRC
   esac
 fi
 
+if [ "$LANE" = aarch64-bti ]; then
+  assert_bench_class_flags "$LANE" enable_aarch64_bti "$BTI_CLASS_FLAGS"
+  bti_dir="tmp/aarch64-prepare-smoke/$LANE"
+  mkdir -p "$bti_dir"
+  cat > "$bti_dir/bti-smoke.c" <<'SMOKE_SRC'
+#include <stdio.h>
+/* The bench's STRIP_PAC(): under __ARM_FEATURE_PAUTH (which -march=armv8.5-a
+ * implies) this compiles to `xpaci` - the instruction the five bti records
+ * faulted on before the lane had a PAuth-capable request. */
+static inline unsigned long bti_strip_pac(unsigned long v) {
+#ifdef __ARM_FEATURE_PAUTH
+  asm volatile("xpaci %0;" : "+r"(v));
+#endif
+  return v;
+}
+static __attribute__((noinline)) int bti_smoke_leaf(int x) { return x + 1; }
+int main(void) {
+  int v = bti_smoke_leaf((int)bti_strip_pac(41UL));
+  printf("aarch64-bti smoke: xpaci executed (%d)\n", v);
+  return v == 42 ? 0 : 1;
+}
+SMOKE_SRC
+  # shellcheck disable=SC2086  # the class-flag string must word-split
+  "$AARCH64_CXX" -O1 -static $BTI_CLASS_FLAGS \
+    -o "$bti_dir/bti-smoke" "$bti_dir/bti-smoke.c" ||
+    die "bti smoke build failed ($AARCH64_CXX $BTI_CLASS_FLAGS)"
+  # The build must bear the instruction: a toolchain that stopped defining
+  # __ARM_FEATURE_PAUTH would otherwise make the leg vacuously green.
+  bti_dis=$("$AARCH64_OBJDUMP" -d "$bti_dir/bti-smoke") ||
+    die "bti smoke: cannot disassemble $bti_dir/bti-smoke with $AARCH64_OBJDUMP"
+  case "$bti_dis" in
+    *xpaci*) ;;
+    *)
+      die "bti smoke carries no xpaci - the '$BTI_CLASS_FLAGS' build is not PAuth-bearing, so the leg would assert nothing"
+      ;;
+  esac
+  bti_out=$("$bti_dir/bti-smoke" 2>&1) || {
+    bti_rc=$?
+    die "bti smoke did not execute the lane's own build class under QEMU_CPU='${QEMU_CPU:-unset}' (rc=$bti_rc): $bti_out"
+  }
+  case "$bti_out" in
+    *"aarch64-bti smoke: xpaci executed"*) ;;
+    *)
+      die "bti smoke ran, but not the lane's own build class (QEMU_CPU='${QEMU_CPU:-unset}'): saw '$bti_out'"
+      ;;
+  esac
+fi
+
 if [ "$LANE" = aarch64-mte ]; then
+  assert_bench_class_flags "$LANE" enable_aarch64_mte "$MTE_CLASS_FLAGS"
   hwasan=$("$AARCH64_CXX" -print-file-name=libhwasan.so)
   case "$hwasan" in
     /*) [ -f "$hwasan" ] || die "libhwasan.so resolved to $hwasan but the file is absent" ;;
@@ -170,9 +316,10 @@ int main(void) {
   return write(1, msg, sizeof msg - 1) == (long)(sizeof msg - 1) ? 0 : 1;
 }
 SMOKE_SRC
-  "$AARCH64_CXX" -O1 -march=armv8.5-a+memtag -fsanitize=hwaddress \
+  # shellcheck disable=SC2086  # the class-flag string must word-split
+  "$AARCH64_CXX" -O1 $MTE_CLASS_FLAGS \
     -o "$mte_dir/mte-smoke" "$mte_dir/mte-smoke.c" ||
-    die "mte smoke build failed ($AARCH64_CXX -march=armv8.5-a+memtag -fsanitize=hwaddress)"
+    die "mte smoke build failed ($AARCH64_CXX $MTE_CLASS_FLAGS)"
   # The program's own line is the primary proof: when main printed it, the
   # lane's build class executed.  The HWASan runtime still aborts at exit on
   # this venue - qemu-user cannot run its LeakSanitizer leg ("does not work

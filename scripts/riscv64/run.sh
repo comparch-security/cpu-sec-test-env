@@ -32,7 +32,7 @@ die() { echo "riscv64/run ($LANE): $*" >&2; exit 1; }
 
 # ---- lane advisory lock ----
 mkdir -p "$BUILD_DIR"
-exec 9>"$BUILD_DIR/.lane.lock"
+exec 9>>"$BUILD_DIR/.lane.lock"
 if ! flock -n 9; then
   die "lane busy: $(cat "$BUILD_DIR/.lane.lock" 2>/dev/null || echo unknown) holds $BUILD_DIR/.lane.lock"
 fi
@@ -62,7 +62,7 @@ cleanup() {
     for f in results.json results.dat variables.json guest-status.txt boot.log; do
       [ -f "$SHARE/$f" ] && cp -f "$SHARE/$f" "$DEST/"
     done
-    ENABLE_FLAG="" bash scripts/common/version_stamp.sh "$LANE" "$DEST/versions.txt"
+    ENABLE_FLAG="" RUN_STATUS="$rc" bash scripts/common/version_stamp.sh "$LANE" "$DEST/versions.txt"
     echo "collected $LANE lane artifacts into $DEST"
   fi
   make -C benchmark clean >/dev/null 2>&1

@@ -33,9 +33,23 @@
             <code>flock</code> on <code>build/.lane.lock</code> and writes the lane
             name into it; a second concurrent lane fails fast with
             <code>lane busy: &lt;holder&gt; holds build/.lane.lock</code>
-            (<code>dump</code> is the deliberate exception: it takes no lock). Every
-            lane <code>run</code> body is wrapped in an EXIT trap that, on every
-            outcome except a timeout, collects the lane's artifacts into
+            (<code>dump</code> is the deliberate exception: it takes no lock). The
+            lock file is opened append-style by the Makefile and by every lane
+            script, so a contender's open never wipes the holder's name before the
+            contention check reads it, and the name is written only after the lock
+            is held. The aarch64 <code>run</code> recipe takes the lock once around
+            both legs (prepare and run) and passes <code>LANE_LOCK_INHERITED=1</code>
+            to the two scripts; a script honours that marker only when the
+            inherited descriptor verifiably is the held lane lock —
+            <code>/proc/self/fd/9</code> must resolve to the lock file and a
+            non-blocking <code>flock</code> on it must succeed — and then closes
+            the descriptor so no lane child (scheduler, emulator, corpus binary)
+            inherits it. A spoofed marker without the held lock dies.
+        </p>
+
+        <p>
+            Every lane <code>run</code> body is wrapped in an EXIT trap that, on
+            every outcome except a timeout, collects the lane's artifacts into
             <code>results/&lt;lane&gt;/&lt;UTC-stamp&gt;/</code>, runs
             <code>make -C benchmark clean</code> and asserts the submodule is
             clean. A run that hits its timeout (exit 124) aborts without
@@ -51,11 +65,15 @@
             the roots and the timeouts. The Makefile and the lane scripts read
             them; nothing else hard-codes them. The Makefile refuses to run with an
             empty timeout or an empty build root rather than let a shell command
-            fail at the wrong moment; the x86_64 <code>deploy</code> re-checks
-            that the submodule's <code>HEAD</code> equals the pinned bench commit,
-            and the riscv64-nemu lane's <code>deploy</code> and <code>run</code>
-            both re-check that equality plus the submodule's cleanliness, alongside
-            the NEMU checkout's own pin.
+            fail at the wrong moment; the submodule's <code>HEAD</code> is asserted
+            equal to the pinned bench commit at every point the worktree is about
+            to be consumed — the x86_64 <code>deploy</code>, the aarch64 lanes'
+            prepare and run scripts, the shared corpus builder, and the
+            riscv64-nemu lane's <code>deploy</code> and <code>run</code>, which
+            additionally re-check the submodule's cleanliness alongside the NEMU
+            checkout's own pin. A <code>git</code> that fails never reads as a
+            verified pin: every one of these checks captures its exit status and
+            refuses, naming the unverifiable state.
         </p>
 
         <h2>Deploy and the derived registry</h2>
@@ -100,20 +118,34 @@
             <code>results.dat</code> (the scheduler's record set and its report),
             <code>versions.txt</code> — the host-provenance record: the
             <code>env.sh</code> pins, the dpkg versions of the prerequisite
-            packages and the host <code>uname</code> — and lane-specific extras
-            (runtime variables, boot logs, guest status). On the riscv64 lane the
-            guest-side truth lives in the guest's own <code>test/sys_info.txt</code>,
-            which carries only the pin lines, never the host <code>uname</code>.
-            The riscv64-nemu lane's extras are its run meta
-            (<code>meta.json</code>) and the deploy meta
+            packages, the host <code>uname</code>, the bench checkout
+            (<code>bench-head:</code> and <code>bench-tree:</code>, the commit and
+            a dirty-aware describe, with an <code>unavailable</code> sentinel when
+            <code>git</code> itself fails) and the run's outcome
+            (<code>run-status: ok</code>, or <code>failed (rc=N)</code> from the
+            collector's own final rc) — and lane-specific extras (runtime
+            variables, boot logs, guest status). On the host lanes the collector
+            treats <code>results.json</code> and <code>results.dat</code> as
+            required and parseable — absence, emptiness or malformed JSON fails
+            the collection — and <code>variables.json</code> stays optional. On
+            the riscv64 lane the guest-side truth lives in the guest's own
+            <code>test/sys_info.txt</code>, which carries only the pin lines,
+            never the host <code>uname</code>. The riscv64-nemu lane's extras are
+            its run meta (<code>meta.json</code>) and the deploy meta
             (<code>meta.deploy.json</code> — corpus compiler, pinned inputs,
             image/rootfs sha256s), and its <code>versions.txt</code> gains a
             <code># nemu</code> section (binary path, <code>HEAD</code>,
             <code>describe --always --dirty</code>, sha256); those two metas are
-            the authoritative provenance record there, because the venue's
-            guest-side <code># Bench tree</code> line always reads
-            <code>&lt;pin&gt;-dirty</code> — a bench-side artifact of its corpus
-            staging (see the README caveats).
+            the authoritative provenance record there. Since the venue's
+            scratch-tree rebuild, a clean bench checkout no longer carries a
+            spurious <code>-dirty</code>: the suffix now means the tree the
+            image or corpus really came from was uncommitted, and a deploy that
+            leaves the submodule dirty is a real edit. A lane's "current" stamp
+            — what the lane-comparison tool selects by default — is the newest
+            directory under <code>results/&lt;lane&gt;/</code> that carries a
+            <code>versions.txt</code> at its top; the pre-restamp relocation to
+            <code>retired-&lt;pin&gt;/</code> subdirectories is therefore inert
+            to selection.
         </p>
 
         <h2>Trust boundary</h2>

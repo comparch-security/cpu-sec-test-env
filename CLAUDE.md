@@ -23,12 +23,22 @@ CheriBSD lanes, cheri_riscv64 and aarch64-morello. The benchmark itself lives in
 - **All pins live in `env.sh` only.** The Makefile and the scripts never hard-code a pin,
   and this file never restates pin values — README's "Pins" table is the prose copy, kept
   in sync by the hooks below.
-- **`benchmark/` is read-only at the pin.** Never edit inside the submodule from this
-  repo: bench-side changes land in the bench repo and are consumed here by bumping
-  `BENCH_COMMIT` in `env.sh`. One consumed exception: the riscv64-nemu lane's deploy
-  drives the venue's own `build-corpus.sh`, which swaps its derived registry over the
-  tracked `configure.json` for the build's duration and trap-restores it — the lane never
-  authors an in-submodule change, and its deploy preflight and post-assert guard that swap.
+- **`benchmark/` is read-only at the pin.** Never edit inside the submodule from this repo:
+  bench-side changes land in the bench repo and are consumed here by bumping
+  `BENCH_COMMIT` in `env.sh`. The riscv64-nemu lane's deploy drives the venue's own
+  `build-corpus.sh`, which cross-builds the corpus in a scratch tree under
+  `out/build/<runset>/tree` and never writes the tracked registry — the deploy's
+  preflight (submodule HEAD equals `BENCH_COMMIT`) and post-assert (tree clean) stay
+  invariants, and any dirt in the submodule is a real edit.
+- **The host lanes' collectors treat `results.json` and `results.dat` as required,
+  parseable artifacts** (absence, emptiness or malformed JSON fails the collection);
+  `variables.json` stays optional (a build class may legitimately not produce it).
+  Every collector stamps its run's final rc (`run-status: ok|failed (rc=N)`).
+- **The aarch64 `run` recipe holds the lane lock across both legs** (prepare and run),
+  passing `LANE_LOCK_INHERITED=1`; the scripts honour that marker only when the
+  inherited fd verifiably is the held lane lock, and close it before any lane child
+  runs. The lock file is opened append-style everywhere, so a contender never wipes
+  the holder's name.
 - **Never commit generated or machine-local trees.** `build/` and `results/` are
   generated; `tmp/` (plans, reports, verification scripts) and `.claude/`
   (agent-tooling configuration, ignored wholesale by the 2026-10-24 policy) are
@@ -44,7 +54,7 @@ Makefile                    the dispatcher — `make ARCH=<lane> <target>`
 env.sh                      every pin, URL, timeout and root — the single source of truth
 scripts/
   common/                   shared machinery: derive_registry.py, build_corpus.sh,
-                            shim.sh, version_stamp.sh
+                            compare_lanes.py, shim.sh, version_stamp.sh
   aarch64/                  prepare.sh / run.sh — the binfmt lane (+ pa/bti/mte variants)
   riscv64/                  kernel + busybox + rootfs image builders; run.sh
   riscv64_nemu/             prepare.sh / run.sh — the NEMU-venue lane; drives
@@ -53,8 +63,8 @@ scripts/
                             console driver, dialect probe
   cheri_riscv64/  morello/  prepare.sh / run.sh for the two CheriBSD lanes
 benchmark/                  cpu-sec-bench submodule — read-only at the env.sh pin
-                            (the riscv64-nemu platform's transient, trap-restored
-                            registry swap is the one consumed exception — see Rules)
+                            (the venue builds in a scratch tree and never writes
+                            the tracked registry — see Rules)
 plans/                      archived implementation plans (the design record)
 build/  results/            generated lane trees and result stamps (gitignored)
 tmp/                        machine-local plans/reports/verification (gitignored)

@@ -6,8 +6,9 @@ set -euo pipefail
 # (benchmark/platform/riscv64-nemu-linux/) consumed as one lane of this
 # dispatcher.  This script owns the lane lock, the ordered preflights, the two
 # supervised build legs and the deployed-runset record; every venue mechanism
-# (the corpus cross-build, the image assembly, the registry swap) stays with
-# the platform - nothing here re-implements it.
+# (the corpus cross-build in its own scratch tree under
+# out/build/<runset>/tree, the image assembly, the publish-on-success manifest)
+# stays with the platform - nothing here re-implements it.
 #
 # Process supervision: each platform leg runs in its own session
 # (`setsid bash <leg> &`, with the lane-lock fd closed, `9>&-`, so no
@@ -117,9 +118,15 @@ cleanup() {
   set +e
   make -C benchmark clean >/dev/null 2>&1
   assert_rc=0
-  if [ -n "$(git -C benchmark status --short)" ]; then
+  # A failing git is not a clean tree; only rc 0 with empty output means clean.
+  dirty=$(git -C benchmark status --short)
+  git_rc=$?
+  if [ "$git_rc" -ne 0 ]; then
+    echo "ERROR: cannot verify the benchmark submodule is clean: 'git -C benchmark status --short' failed (rc=$git_rc)" >&2
+    assert_rc=1
+  elif [ -n "$dirty" ]; then
     echo "ERROR: benchmark submodule left dirty after clean:" >&2
-    git -C benchmark status --short >&2
+    printf '%s\n' "$dirty" >&2
     assert_rc=1
   fi
   if [ "$rc" -ne 0 ]; then exit "$rc"; fi
@@ -128,17 +135,28 @@ cleanup() {
 trap cleanup EXIT
 
 # ---- preflights: one ordered block, before any build ----
-bench_head=$(git -C benchmark rev-parse HEAD)
+# The deploy's invariants: the submodule's HEAD is BENCH_COMMIT and its tree is
+# clean.  The venue builds its corpus in a scratch tree and never edits the
+# tracked registry, so any dirt here is a real edit to the submodule.  Every git
+# read checks its rc: a failing git reports the unverifiable state instead of
+# reading as clean or as a valid pin.
+git_rc=0
+bench_head=$(git -C benchmark rev-parse HEAD) || git_rc=$?
+[ "$git_rc" -eq 0 ] ||
+  die "cannot verify the benchmark pin: 'git -C benchmark rev-parse HEAD' failed (rc=$git_rc)"
 [ "$bench_head" = "$BENCH_COMMIT" ] ||
   die "benchmark submodule is at $bench_head but env.sh pins BENCH_COMMIT=$BENCH_COMMIT"
-if [ -n "$(git -C benchmark status --short)" ]; then
-  echo "ERROR: benchmark submodule is dirty:" >&2
-  git -C benchmark status --short >&2
-  echo "A dirty submodule is usually a leaked registry swap: the platform's corpus build swaps" >&2
-  echo "the derived configure.json over the tracked registry for its duration and restores it on" >&2
-  echo "exit, so a SIGKILL inside that window leaves the subset in place.  That gap is the open" >&2
-  echo "deferral corpus-build-registry-swap-crash-safety.  Restore with:" >&2
+git_rc=0
+bench_dirty=$(git -C benchmark status --short) || git_rc=$?
+[ "$git_rc" -eq 0 ] ||
+  die "cannot verify the benchmark submodule is clean: 'git -C benchmark status --short' failed (rc=$git_rc)"
+if [ -n "$bench_dirty" ]; then
+  echo "ERROR: benchmark submodule is dirty (HEAD must be $BENCH_COMMIT with a clean tree):" >&2
+  printf '%s\n' "$bench_dirty" >&2
+  echo "The venue builds its corpus in a scratch tree and never edits the tracked tree, so any" >&2
+  echo "dirt is a real edit to the submodule.  Restore the submodule to the pinned commit with:" >&2
   echo "  git -C benchmark checkout -- ." >&2
+  echo "  git -C benchmark clean -fd   (only after reviewing the listed paths)" >&2
   exit 1
 fi
 { [ -f "$NEMU_BIN" ] && [ -x "$NEMU_BIN" ]; } ||
@@ -182,9 +200,13 @@ run_leg "$PLATFORM/build-image.sh" ||
 # ---- post-asserts ----
 [ -f "$OUT/$RUNSET/fw_payload.bin" ] ||
   die "image $OUT/$RUNSET/fw_payload.bin missing after the image build"
-if [ -n "$(git -C benchmark status --short)" ]; then
-  echo "ERROR: benchmark submodule left dirty by the build (a leaked registry swap):" >&2
-  git -C benchmark status --short >&2
+git_rc=0
+bench_dirty=$(git -C benchmark status --short) || git_rc=$?
+[ "$git_rc" -eq 0 ] ||
+  die "cannot verify the benchmark submodule is clean after the build: 'git -C benchmark status --short' failed (rc=$git_rc)"
+if [ -n "$bench_dirty" ]; then
+  echo "ERROR: benchmark submodule left dirty by the build (the venue builds in a scratch tree and never writes the tracked tree):" >&2
+  printf '%s\n' "$bench_dirty" >&2
   exit 1
 fi
 mkdir -p "$ROOT/$BUILD_DIR/riscv64-nemu"

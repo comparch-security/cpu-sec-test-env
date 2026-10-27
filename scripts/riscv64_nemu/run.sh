@@ -75,14 +75,26 @@ case "$NEMU_DIR" in /*) ;; *) NEMU_DIR="$ROOT/$NEMU_DIR" ;; esac
 case "$NEMU_BIN" in /*) ;; *) NEMU_BIN="$ROOT/$NEMU_BIN" ;; esac
 
 # ---- preflights: before the traps, so a failed preflight publishes nothing ----
-bench_head=$(git -C benchmark rev-parse HEAD)
+# The deploy's invariants: the submodule's HEAD is BENCH_COMMIT and its tree is
+# clean (the venue builds its corpus in a scratch tree and never edits the
+# tracked tree, so any dirt is a real edit).  Every git read checks its rc: a
+# failing git reports the unverifiable state instead of reading as a valid pin
+# or a clean tree.
+git_rc=0
+bench_head=$(git -C benchmark rev-parse HEAD) || git_rc=$?
+[ "$git_rc" -eq 0 ] ||
+  die "cannot verify the benchmark pin: 'git -C benchmark rev-parse HEAD' failed (rc=$git_rc)"
 [ "$bench_head" = "$BENCH_COMMIT" ] ||
   die "benchmark submodule is at $bench_head but env.sh pins BENCH_COMMIT=$BENCH_COMMIT"
-if [ -n "$(git -C benchmark status --short)" ]; then
-  echo "ERROR: benchmark submodule is dirty:" >&2
-  git -C benchmark status --short >&2
-  echo "A dirty submodule is usually a leaked registry swap (the platform's corpus build swaps" >&2
-  echo "the derived registry over the tracked one for its duration); restore with:" >&2
+git_rc=0
+bench_dirty=$(git -C benchmark status --short) || git_rc=$?
+[ "$git_rc" -eq 0 ] ||
+  die "cannot verify the benchmark submodule is clean: 'git -C benchmark status --short' failed (rc=$git_rc)"
+if [ -n "$bench_dirty" ]; then
+  echo "ERROR: benchmark submodule is dirty (HEAD must be $BENCH_COMMIT with a clean tree):" >&2
+  printf '%s\n' "$bench_dirty" >&2
+  echo "The venue builds its corpus in a scratch tree and never edits the tracked tree, so any" >&2
+  echo "dirt is a real edit to the submodule.  Restore it with:" >&2
   echo "  git -C benchmark checkout -- ." >&2
   exit 1
 fi
@@ -191,7 +203,7 @@ cleanup() {
       cp -f "$RUN_DIR/meta.json" "$DEST/"
       cp -f "$OUT/$RUNSET/meta.json" "$DEST/meta.deploy.json"
     fi
-    ENABLE_FLAG="" bash scripts/common/version_stamp.sh riscv64-nemu "$DEST/versions.txt"
+    ENABLE_FLAG="" RUN_STATUS="$rc" bash scripts/common/version_stamp.sh riscv64-nemu "$DEST/versions.txt"
     nemu_bin_path=$(realpath "$NEMU_BIN" 2>/dev/null || printf '%s\n' "$NEMU_BIN")
     {
       echo "# nemu"
@@ -216,9 +228,15 @@ cleanup() {
   fi
   make -C benchmark clean >/dev/null 2>&1
   assert_rc=0
-  if [ -n "$(git -C benchmark status --short)" ]; then
+  # A failing git is not a clean tree; only rc 0 with empty output means clean.
+  dirty=$(git -C benchmark status --short)
+  git_rc=$?
+  if [ "$git_rc" -ne 0 ]; then
+    echo "ERROR: cannot verify the benchmark submodule is clean: 'git -C benchmark status --short' failed (rc=$git_rc)" >&2
+    assert_rc=1
+  elif [ -n "$dirty" ]; then
     echo "ERROR: benchmark submodule left dirty after clean:" >&2
-    git -C benchmark status --short >&2
+    printf '%s\n' "$dirty" >&2
     assert_rc=1
   fi
   if [ "$rc" -ne 0 ]; then exit "$rc"; fi

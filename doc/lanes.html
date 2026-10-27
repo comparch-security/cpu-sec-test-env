@@ -90,7 +90,15 @@
             <code>_mte</code>) select one variant at a time and publish under
             <code>results/aarch64-&lt;variant&gt;/</code>. The lane puts its shim
             directory first on <code>PATH</code> and logs the resolved extraction
-            tool at run start.
+            tool at run start. The <code>run</code> recipe takes the lane lock
+            once around both legs and passes <code>LANE_LOCK_INHERITED=1</code>:
+            the scripts honour the marker only when the inherited descriptor
+            verifiably is the held lane lock, then close it so no lane child
+            inherits it. Both scripts also assert the submodule's
+            <code>HEAD</code> against the pin before doing anything, and the
+            collector treats <code>results.json</code>/<code>results.dat</code>
+            as required and parseable (<code>variables.json</code> optional) and
+            stamps the run's final rc.
         </p>
         <p>
             <strong>Every aarch64-family stamp before 2026-10-25 is a
@@ -120,15 +128,24 @@
             entirely. <code>prepare.sh</code> executes a lane-representative
             build under the request at deploy — a PAC-ret probe for
             <code>pa</code>, an <code>-fsanitize=hwaddress</code> program for
-            <code>mte</code> — so a request the venue cannot honour fails the
-            deploy rather than every case. The <code>mte</code> smoke's
+            <code>mte</code> — and cross-checks each such smoke's class flags
+            against the pinned <code>benchmark/Makefile</code>'s own variant
+            block (failing closed when the block or its flag lines cannot be
+            read), so the smokes prove the build the corpus will actually get
+            rather than a paraphrase of it — a request the venue cannot honour
+            fails the deploy rather than every case. The <code>mte</code> smoke's
             acceptance is two-outcome on purpose: the program's own line is the
             primary proof, and the runtime's <code>99</code> with a sanitizer
             report is the pre-output fallback, because qemu-user cannot run the
             sanitizer's LeakSanitizer leg (a clean exit is not this venue's
-            shape). The <code>bti</code> lane deliberately has no leg: BTI
-            hints execute as NOPs on a model without FEAT_BTI, so nothing can
-            fault and a leg would assert nothing. The <code>mte</code> lane's old spelling
+            shape). The <code>bti</code> smoke builds an <code>xpaci</code>-bearing
+            binary under the request and requires it to execute — the census of
+            the built binary must find <code>xpaci</code> (so the leg cannot pass
+            vacuously), and the guest must run it: the class's
+            <code>-march=armv8.5-a</code> implies PAuth, and a PAuth-less model
+            turns the bench's <code>STRIP_PAC()</code> into a SIGILL (this is
+            exactly what the first post-<code>f9e4ba7</code> bti stamp caught —
+            five records at <code>260</code> before the request was pinned). The <code>mte</code> lane's old spelling
             <code>max,mte=on</code> was rejected outright by this
             <code>qemu-aarch64</code> (no model has that property) and never
             reached a guest; under the current request the guest reports
@@ -141,25 +158,36 @@
             class. Each stamp records both the request and the observation
             (<code># CPU request:</code> beside <code># CPU observation:</code>),
             so a stamp says what was in effect, never what was intended. The
-            request-less lanes (<code>aarch64</code>, <code>aarch64-bti</code>)
-            clear an ambient <code>QEMU_CPU</code> outright rather than
-            inheriting one, and both scripts drop an inherited
-            <code>QEMU_VERSION</code>, so the recorded <code>unset</code> is
-            the truth and not an assumption.
+            three variant lanes (<code>pa</code>, <code>bti</code>,
+            <code>mte</code>) each request the same model,
+            <code>QEMU_CPU=max</code> — the venue's default <em>plus</em> PAuth —
+            under three different names in <code>env.sh</code>, because the bti
+            class needs it as much as pa does: its <code>-march=armv8.5-a</code>
+            implies PAuth, and the bench's <code>STRIP_PAC()</code> compiles to
+            <code>xpaci</code>, which traps on a model without FEAT_PAuth (the
+            fault is the PAuth the <code>-march</code> drags in, not the BTI
+            hints). Only plain <code>aarch64</code> is request-less: it clears
+            an ambient <code>QEMU_CPU</code> outright rather than inheriting
+            one, and both scripts drop an inherited <code>QEMU_VERSION</code>,
+            so the recorded <code>unset</code> is the truth and not an
+            assumption.
         </p>
         <p>
-            <strong>One <code>pa</code> class is a calibration limitation, not a
-            defence observation.</strong> The bench's RA-offset producers scan
-            the stack with a raw frame compare, which cannot match a PAC-signed
-            saved LR: the producer stores nothing, and ten return-hijack records
-            fall back to their documented guard and deliver the shared
-            <code>1</code> — a precondition failure that their declared
-            expectation hides from a per-record classification. The mechanism is
-            probed under the lane's own flags (the frame slot reads
-            <code>0x007b…</code>, and XPACI strips it back to the label), and the
-            fix is bench-side: standalone deferral
-            <code>aarch64-pa-calibration-cascade</code>. Do not read those ten
-            <code>1</code>s as PAuth evidence.
+            <strong>The <code>pa</code> class's RA-offset calibration runs under
+            PAC-ret.</strong> The bench's RA-offset producers once scanned the
+            stack with a raw frame compare, which cannot match a PAC-signed saved
+            LR: the producer stored nothing, and ten return-hijack records fell
+            back to their documented guard and delivered the shared
+            <code>1</code> — precondition failures their declared expectation hid
+            from a per-record classification. The bench fix has the producer
+            derive and store a real offset under this lane's flags, so those ten
+            records execute their measurement instead of skipping it; the lane's
+            <code>variables.json</code> carries the stored offsets
+            (<code>stack-offset-v-p-g0</code>/<code>-g1</code>) and
+            <code>cfi-return-without-call</code> delivers its declared crash
+            code. A stamp whose <code>variables.json</code> lacks the offsets or
+            whose ten records still read the shared guard is evidence of a
+            regression, not of the limitation.
         </p>
 
         <h2>riscv64</h2>
@@ -186,8 +214,13 @@
             The bench's own NEMU venue, wrapped as a lane.
             <code>prepare.sh</code> takes the lane lock, then preflights in one
             block before any build: the bench submodule at the pinned commit
-            <em>and clean</em> (a leaked registry swap is named together with its
-            deferral), the resolved <code>NEMU_BIN</code>, and the NEMU
+            <em>and clean</em> — the deploy's two invariants (HEAD equals
+            <code>BENCH_COMMIT</code>, tree clean). The venue cross-builds its
+            corpus in a scratch tree under <code>out/build/&lt;runset&gt;/tree</code>
+            and never writes the tracked registry, so any dirt in the submodule
+            is a real edit and is named as such; a failing <code>git</code> is
+            refused as unverifiable, never read as clean. The preflight also
+            checks the resolved <code>NEMU_BIN</code>, and the NEMU
             checkout's <code>HEAD</code> against <code>NEMU_COMMIT</code> — never
             the binary's provenance, which is recorded instead (path,
             <code>describe --always --dirty</code>, sha256) and compared

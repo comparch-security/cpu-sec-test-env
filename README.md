@@ -168,10 +168,19 @@ results/riscv64-nemu/<UTC-stamp>/   results.json  results.dat  boot.log
                             (+ variables.json when the registry's set-var
                              records ran; the deploy's corpus and image live
                              under build/riscv64-nemu/platform/<runset>/)
+results/comparison-<UTC>/   comparison.json  comparison.md — the lane-comparison
+                            snapshot (machine-local; see *Comparing lanes*)
 ```
 
 `versions.txt` is the host-provenance record: the env.sh pins, the dpkg versions
-of the packages above, and the host `uname`. On the riscv64 lane the guest's
+of the packages above, the host `uname`, the bench checkout (`bench-head:` and
+`bench-tree:` — the commit and a dirty-aware describe; a failing `git` records an
+`unavailable` sentinel with its rc, never a value), and the run's outcome
+(`run-status: ok`, or `run-status: failed (rc=N)` from the collector's own final
+rc). On the host lanes (x86_64 and the aarch64 family) the collector treats
+`results.json` and `results.dat` as required and parseable — absence, emptiness
+or malformed JSON fails the collection — and `variables.json` stays optional. On
+the riscv64 lane the guest's
 `test/sys_info.txt` carries the guest-side truth (guest kernel and cpuinfo plus
 only the pin lines — never the host `uname`). On the riscv64-nemu lane the stamp
 adds the run's `meta.json` (platform, runset, bench commit/tree, image and NEMU
@@ -179,13 +188,61 @@ sha256s, the record counts, the guest exit code and the good-trap flag) and the
 deploy's `meta.deploy.json` (the corpus compiler, the pinned inputs, the image
 and rootfs sha256s), and `versions.txt` gains a `# nemu` section: the binary's
 path, its `HEAD`, `describe --always --dirty` and its sha256. Those two metas
-are the authoritative tree/provenance record for this lane — the venue's
-guest-side `# Bench tree` line reads `<pin>-dirty` even at a clean pin (see
-*Known caveats*).
+are the authoritative tree/provenance record for this lane — since the venue's
+scratch-tree rebuild, a clean bench checkout no longer carries a spurious
+`-dirty`; the suffix now means the tree an image or corpus came from really was
+uncommitted (see *Known caveats*).
 
 `manifest.json` records the corpus as deployed: the bench commit, the lane, the
 per-unit file list with sha256 and mode, the derived side file(s), and the
 declared expected failures.
+
+### Comparing lanes
+
+`python3 scripts/common/compare_lanes.py` classifies the newest stamp of each
+selected lane against the pin itself: the registry is read with
+`git show <pin>:configure.json`, so the classification source is pinned by
+construction and immune to checkout drift between the lane runs and the gate.
+The default lane set is the seven executable lanes (x86_64, the four aarch64
+variants, riscv64, riscv64-nemu); `--reference` (default `x86_64`) is the lane
+every other lane's codes are compared against; `--out` (default
+`results/comparison-<UTC>-<pid>`) is where the snapshot's `comparison.json` and
+`comparison.md` land.
+
+The tool refuses rather than guesses (exit 2): a mixed pin across the selected
+stamps, a stamp that is not a completed run (`run-status` missing or failed, an
+evidence-only stamp, a missing or unparsable `results.json`), a `bench-tree`
+that is absent, `unavailable`, or `-dirty`, a missing reference lane, a pin not
+in the submodule's object store, or input past the size cap or malformed. A lane
+may be named deliberately absent with `--allow-absent` — recorded in the
+snapshot, not gate-failing.
+
+Retired stamps live under `results/<lane>/retired-<pin>/` (the pre-restamp
+relocation each lane's run performs). Selection considers only directories that
+carry a `versions.txt` at their top, so retirement directories are inert: a
+lane whose only entries are retirement directories reads as absent, and a
+newest stamp that exists but fails the completeness checks is still a named
+exit-2 refusal.
+
+The exit code is the gate: `0` — every selected lane complete and every record
+in {`clean`, `declared`, `not-run-skipped`, `class-masked`}; `1` — a gate
+failure (`out-of-expect`, `build-failed`, `prerequisite-unsatisfied`,
+`missing-from-lane`, `extra-record`, an absent lane without `--allow-absent`, a
+stamp whose `run-status` is failed); `2` — a refusal. **A nonzero exit IS the
+finding** — disposition it in a report or a deferred issue; it is never bypassed.
+
+Two verdicts need their class spelled out. `not-run` splits by the scheduler's
+own two counts: the count without a make status is a declared platform skip
+(`not-run-skipped`, benign); the same count with a make status is a build
+failure (`build-failed`, and the status is named). `class-masked` is scoped to
+the HWASan lane: on the `aarch64-mte` stamp, a `99` on a `set-var` producer is
+the calibration producer whose HWASan build aborts before it can measure (the
+constant is left undeclared by design); the same code on a producer anywhere
+else is `out-of-expect`.
+
+Snapshots are machine-local (`results/` is gitignored and never committed); the
+tool under `scripts/common/` is the durable artifact, and this section carries
+the command, never a recorded result.
 
 ## Pins
 
@@ -193,12 +250,12 @@ All pins live in `env.sh` only — no script hard-codes them.
 
 | Item | Pin |
 |---|---|
-| bench commit | `47d6f9d0b99744d36bd857f6da7334036ce215c3` — the four `aarch64` variants carry stamps at this pin (2026-10-26 re-stamp); every other lane's newest stamp is at the previous pin `f4c916a821a6f3fa7024a75b1a25304ae4555729` (the 2026-10-24 uniform re-run) and therefore predates it — the riscv64-family re-stamp at this pin is a named successor, and the caveats below say when a measurement is older |
+| bench commit | `f9e4ba7addc2865aacdf70f51e9fd203854f4727` — declares the aarch64 result classes the stamps actually produce (the HWASan/MTE producer set and the PAuth crash codes), so a lane that behaves as designed no longer reads as out-of-expect, and rebuilds the NEMU venue's staging (scratch-tree corpus build, reproducible image, publish-on-success manifest). All seven executable lanes carry stamps at this pin (2026-10-27 uniform re-stamp); the two CHERI lanes keep their previous-pin stamps and are excluded from the pin-uniform comparison by design |
 | NEMU | `../NEMU` @ `ae1ec3cd869b9c5e1783af691538d5c26f37ee55` — the workspace checkout; `NEMU_DIR`/`NEMU_BIN` are a relative-default pair, and the binary's sha256 is recorded and compared run-to-run, **not** pinned |
 | riscv64 toolchain | `riscv64-linux-gnu-{g++-13,gcc-13,as,objdump}` (Ubuntu gcc-13 cross 13.4.0) |
 | aarch64 toolchain / sysroot | `aarch64-linux-gnu-{g++-13,gcc-13,as,objdump}`, `/usr/aarch64-linux-gnu` |
 | QEMU | 10.2.1 (`qemu-system-riscv64`, `qemu-aarch64`) |
-| QEMU CPU models | riscv64 `rva23s64` (`-M virt`, `-bios default`, 256 MiB); aarch64 `pa` and `mte` each request `QEMU_CPU=max` — the venue's default model **plus** PAuth (`max` is *not* the default: left unset, this `qemu-aarch64` behaves as `max,pauth=off`, byte-identical HWCAP). The `pa` request is load-bearing (its `retaa` epilogue SIGILLs without FEAT_PAuth) — see *Known caveats* |
+| QEMU CPU models | riscv64 `rva23s64` (`-M virt`, `-bios default`, 256 MiB); the aarch64 `pa`, `bti` and `mte` lanes each request `QEMU_CPU=max` (under three per-lane names in `env.sh`) — the venue's default model **plus** PAuth (`max` is *not* the default: left unset, this `qemu-aarch64` behaves as `max,pauth=off`, byte-identical HWCAP). The `pa` request is load-bearing (its `retaa` epilogue SIGILLs without FEAT_PAuth) and so is the `bti` request at this pin (the bti class's `-march=armv8.5-a` implies PAuth, and the bench's `STRIP_PAC()` compiles to `xpaci`, which traps without FEAT_PAuth) — see *Known caveats* |
 | guest kernel | Linux 6.18.56 (kernel.org tarball, sha256-verified) |
 | busybox | 1.36.1 (static, sha256-verified) |
 | cheribuild | `db2f0360381e5fa2d50379e92ad119bb98db25c4` |
@@ -207,7 +264,7 @@ All pins live in `env.sh` only — no script hard-codes them.
 | CHERI boot firmware | riscv64: `CTSRD-CHERI/riscv-pk` @ `0cb596cf6e49c0014256300b614c5cd30cb90d57` → `bbl-riscv64cheri-virt-fw_jump.bin`; Morello: `edk2-aarch64-code.fd` |
 | CHERI CPU pins | riscv64 `rv64,sstc=off` (Sstc workaround — the pinned riscv-pk firmware never sets `menvcfg.STCE`); Morello `morello`, `virt,gic-version=3` |
 | CHERI sysroots | `CHERI_SYSROOT_RISCV64`, `CHERI_SYSROOT_MORELLO` — purecap, under two different SDK roots |
-| reproducibility | `KBUILD_BUILD_TIMESTAMP/USER/HOST`, `SOURCE_DATE_EPOCH` (unset for the CheriBSD legs); the riscv64-nemu image is **not** byte-reproducible — see the caveats |
+| reproducibility | `KBUILD_BUILD_TIMESTAMP/USER/HOST`, `SOURCE_DATE_EPOCH` (unset for the CheriBSD legs); the riscv64 and riscv64-nemu images are byte-reproducible (identity pins, normalized staging, `cpio --reproducible`, and the venue's fixed build timestamp) |
 | timeouts | lane run 3600 s, lane deploy 7200 s; CHERI emulator/image legs 86400 s (`CHERI_BUILD_TIMEOUT`) |
 
 The riscv64 image is byte-reproducible: the kernel/busybox builds carry the
@@ -235,48 +292,19 @@ corpus without adding isolation first.
 ## Known caveats
 
 - **The riscv64-nemu lane runs all 246 records at the uniform pin.** The guest
-  exits 0 with the good-trap flag; three rows lie outside the registry's
-  `expect-results` at `f4c916a` — the same three the riscv64 lane carries
-  (`cfi-jump-func-ra-from-heap-memcpy-implicit-arith` = 267,
-  `cfi-call-mid-func` = 214, `cfi-return-to-peer-asmfunc` = 262) — and the
-  earlier 255 expectation gap (`cfi-return-to-parent-wrong-call-site-fakefunc`)
-  is closed: the record now delivers its declared `1`. The two riscv64 venues
-  agree with each other record for record and diverge from the `x86_64`
-  reference in the same eight records (seven `cfi` plus
-  `mts-access-after-reclaim-heap`, the latter a legal pass verdict under the
-  exit-code contract, never an anomaly). The three out-of-expect rows are
-  case-delivery defects, not this lane's: the 2026-10-25 intent check reproduced
-  each on the deployed corpus and delivered them to the bench tracker
-  (`defer-issue-cfi-delivery-defects`, `defer-issue-f2-267-not-closed`);
-  `214`/`262` are not declarable values. Results are extracted by parsing the
-  guest console, so every non-timeout stamp carries console evidence as
-  `boot.log` — the run dir's own log when one was created, else the lane's
-  platform log copied under that name; a run whose completeness gate
-  fails publishes `boot.log` + `versions.txt` only, and a timeout publishes
-  nothing.
-- **The riscv64-nemu image is not byte-reproducible across deploys.** Its
-  platform packs the rootfs with `cpio -o -H newc` but without `--reproducible`,
-  so host inode numbers leak into the newc headers and two deploys at identical
-  pins differ byte-for-byte at equal size (bench-side, pre-existing; recorded as
-  a deferral — the fix, adding `--reproducible`, belongs to a bench cycle). The
-  venue README's byte-reproducibility claim is wrong for now. Each stamp records
-  the image sha256 it actually ran (`meta.json` and `meta.deploy.json` agree), so
-  compare stamps within one image.
-- **The riscv64-nemu guest records `# Bench tree: <pin>-dirty` even at a clean
-  pin** — a bench-side artifact of the venue's corpus staging (the marker is
-  computed while the platform's own registry swap is active), contradicting the
-  same run's `meta.json` (`bench_tree: <pin>`). Two provenance records of one run
-  disagree; treat `meta.json`/`meta.deploy.json` as authoritative. Filed
-  bench-side.
-- **The riscv64-nemu deploy consumes the venue's transient registry swap.** The
-  platform's own `build-corpus.sh` swaps its derived registry over the tracked
-  `benchmark/configure.json` for the build's duration and trap-restores it; the
-  lane authors no in-submodule change and guards the swap from both sides — the
-  deploy preflight fails fast on a leaked swap (naming the deferral
-  `corpus-build-registry-swap-crash-safety` and the restore command), and every
-  exit path re-asserts the submodule clean. A SIGKILL *inside* the swap window
-  still leaks the subset; that crash-safety gap is the deferral's own,
-  bench-side fix.
+  exits 0 with the good-trap flag, and at the current pin every record
+  classifies `clean` or `declared` — the case-delivery rows the previous pin
+  left outside the registry's `expect-results` are declared at the source
+  (the bench declares the crash-code classes the two riscv64 venues produce),
+  so the comparison gate carries no out-of-expect row for either riscv64
+  venue. The two venues agree with each other record for record and diverge
+  from the `x86_64` reference where the platforms genuinely differ; the
+  divergence matrix is in the lane-comparison snapshot (see *Comparing
+  lanes*). Results are extracted by parsing the guest console, so every
+  non-timeout stamp carries console evidence as `boot.log` — the run dir's own
+  log when one was created, else the lane's platform log copied under that
+  name; a run whose completeness gate fails publishes `boot.log` +
+  `versions.txt` only, and a timeout publishes nothing.
 - **Stamps carry host-local absolute paths.** This lane's `versions.txt`
   `nemu-bin:` line (the binary's `realpath`) and the copied metas'
   `nemu_bin.path` / `image.path` name this workstation's directories — scrub a
@@ -286,19 +314,15 @@ corpus without adding isolation first.
   under `tmp/verification/` (step verifiers, acceptance and negative drivers)
   and in the lane runs' own stamps, all uncommitted by design.
 - **All 246 records run on the riscv64 lane at the uniform pin.**
-  The independent-assembly translation (`cfi-return-to-peer-asmfunc` and
-  `cfi-return-to-parent-non-call-site-by-asmfunc`) is in the pinned bench
+  The independent-assembly translation is in the pinned bench
   commit, so the derived registry declares no skips and the corpus stages 145
-  units. Three riscv64 verdicts lie outside the registry's `expect-results` at
-  `f4c916a` — `cfi-jump-func-ra-from-heap-memcpy-implicit-arith` (267),
-  `cfi-call-mid-func` (214) and `cfi-return-to-peer-asmfunc` (262) — all three
-  case-delivery defects under the 2026-10-25 intent check, delivered bench-side
-  (see the riscv64-nemu caveat above); the earlier
-  `cfi-return-to-parent-wrong-call-site-fakefunc` (255) row is closed by the
-  contract (it delivers its declared `1`). The sweep's opcode-extraction fix
-  stays lane-confirmed at this pin: `acc-read-func` exits 0 (before the sweep it
+  units. At the current pin every record classifies `clean` or `declared` —
+  the case-delivery verdicts the previous pin left outside the registry's
+  `expect-results` are declared at the source, and the earlier expectation gap
+  delivers its declared value under the exit-code contract. The opcode-extraction
+  fix stays lane-confirmed: `acc-read-func` exits 0 (before the sweep it
   exited 1 — the extractor matched the translated `assembly_helper` symbol and
-  wrote an empty side file), and `mss-write-by-stack-pointer` (1) is declared in
+  wrote an empty side file), and `mss-write-by-stack-pointer` is declared in
   the registry's `expect-results`.
 - **The two lane deviations recorded at the pre-uniform pin are closed.**
   (Measured at `74195c43`, the pin before the `a09f570`/`f4c916a` bumps.) Both
@@ -309,13 +333,15 @@ corpus without adding isolation first.
   extraction through the SDK's own CHERI `riscv64cheri-objdump`), and the four
   aarch64 host lanes' `acc-read-func` exits 0 — it was recorded not-built
   (`1025`) at the earlier pin — with the extraction tool and the shim's
-  bare-`objdump` PATH entry both named in each lane's run log. For the aarch64
-  half, the 2026-10-24 uniform re-run re-confirms nothing (those stamps are
-  non-execution records — see the family caveat above); the real evidence is the
-  fresh stamps, e.g. `results/aarch64/20261025T230008Z`: `acc-read-func` result
-  `0` on a 77,360-byte binary.
-- **The CHERI lanes run the strict corpus.**
-  Both boot their pins and run the corpus end-to-end over virtio-9p. The
+  bare-`objdump` PATH entry both named in each lane's run log. The fresh
+  stamps (the 2026-10-27 uniform re-stamp, see *Pins*) re-confirm it on every
+  host lane: `acc-read-func` delivers its declared result in each.
+- **The CHERI lanes run the strict corpus — at the previous pin, by design.**
+  Both boot their pins and run the corpus end-to-end over virtio-9p; their
+  newest stamps are `f4c916a`-era and they are deliberately **excluded** from
+  the uniform pin comparison (named as excluded by the comparison tool's
+  default lane set, never absent — passing one explicitly refuses on the pin
+  mismatch). The
   independent-assembly translation is in the pinned bench, so the corpus builds
   under strict mode — no `disable_independent_assembly`, no `--bring-up`. The
   remaining not-run records are CHERI-platform build failures declared in the
@@ -372,13 +398,12 @@ corpus without adding isolation first.
   version pin is renamed (`QEMU_PIN_VERSION`) and no longer exported, and the
   deploy smoke now asserts the guest loader's own output instead of an exit
   code, so a zero-execution route fails the deploy rather than publishing a
-  stamp. The request-less lanes (`aarch64`, `aarch64-bti`) also clear an
-  ambient `QEMU_CPU` rather than inheriting one, and both scripts drop an
+  stamp. The three variant lanes (`pa`, `bti`, `mte`) each pin a CPU request
+  under their own name in `env.sh` (see *Pins*), and the plain lane clears an
+  ambient `QEMU_CPU` rather than inheriting one; both scripts drop an
   inherited `QEMU_VERSION`, so the request a stamp records is the one that
-  executed. The family's first real executions are the `f4c916a`-era stamps
-  (`results/aarch64*/20261025T09*Z/`); the `47d6f9d`-era stamps
-  (`results/aarch64*/20261025T23*Z/`, produced late on 2026-10-25 UTC) re-base
-  the family on the bumped bench pin (see *Pins*).
+  executed. The family's first real executions are the `f4c916a`-era stamps;
+  the current evidence base is the 2026-10-27 uniform re-stamp (see *Pins*).
 - **The `mte` variant really exercises MTE now.** The old request was spelled
   `max,mte=on`, which this venue rejects outright (`can't apply global
   max-arm-cpu.mte=on: Property 'max-arm-cpu.mte' not found`) and which therefore
@@ -401,25 +426,38 @@ corpus without adding isolation first.
   NOP like BTI's — and the venue's default model has no FEAT_PAuth. Before the
   request was pinned, that class dominated the lane's first really-executing
   stamp (dated snapshot, 2026-10-25: `256+4` = SIGILL on 226 of 246 records);
-  with `QEMU_CPU=max` pinned it is gone, and the stamp's out-of-expect rows are
-  two named classes — the calibration cascade below, and
-  `cfi-return-without-call`'s undeclared `19` (a fault that matches no
-  registration under PAuth; a bench-side declaration successor, not a defence
-  observation). One of those classes is a
-  **calibration limitation, not a defence observation**: the bench's RA-offset
-  producers scan the stack with a raw compare, which cannot match a PAC-signed
-  saved LR, so ten return-hijack records deliver the shared `1` as a
-  precondition failure — recorded as the standalone deferral
-  `aarch64-pa-calibration-cascade` (bench-side fix). The deploy smoke executes
+  with `QEMU_CPU=max` pinned it is gone. The calibration limitation the
+  request's arrival exposed is also closed at this pin: the bench's RA-offset
+  producers now derive and store a real offset under PAC-ret (recorded in the
+  stamp's `variables.json` as the stack-offset values), the ten return-hijack
+  records that used to deliver the shared precondition `1` execute their
+  measurement, and `cfi-return-without-call`'s PAuth fault class is declared at
+  the source — a stamp whose `variables.json` lacks the offsets, or whose ten
+  records read the shared guard again, is evidence of a regression, not of the
+  limitation. The deploy smoke executes
   a PAC-ret probe under the lane's request, so a request this venue cannot
   honour fails the deploy instead of poisoning the stamp.
-- **The bench pin moved on 2026-10-26; only the `aarch64` family was re-stamped.**
-  The bench's `47d6f9d` commit carries five case-delivery fixes, so the
-  `riscv64`, `riscv64-nemu` and CHERI lanes' newest stamps — and every statement
-  in this file measured "at `f4c916a`" — predate the pin. Their re-stamp under
-  `47d6f9d` is a named successor; the aarch64 family's 2026-10-26 stamps are the
-  only ones at the current pin, and the bench fixes' effect is visible there
-  (the `267` class the plain and `bti` lanes carried at `f4c916a` is gone).
+- **The `bti` variant needs the same request, for a different reason.** BTI
+  hints themselves execute as NOPs on a model without FEAT_BTI — but the bti
+  class builds with `-march=armv8.5-a`, which implies PAuth, and the bench's
+  `STRIP_PAC()` compiles to `xpaci` under it: on a PAuth-less model that
+  instruction traps, and the return-hijack records that call it die with SIGILL
+  before they measure anything. The first uniform-pin stamp caught exactly that
+  (a handful of return-hijack rows at `260` that every earlier bti stamp scored
+  `0`); the lane now pins `QEMU_CPU=max` like its sibling variants and its
+  deploy smoke builds an `xpaci`-bearing binary and requires it to execute —
+  the built binary's opcode census must find `xpaci`, so the leg cannot pass
+  vacuously. A bti stamp carrying SIGILL-class results on its return-hijack
+  records is an execution-venue failure, never a defence observation.
+- **The bench pin is uniform across the seven executable lanes.** The
+  2026-10-27 re-stamp moved `x86_64`, all four aarch64 variants, `riscv64` and
+  `riscv64-nemu` to the current pin in one cycle, each lane's older stamps
+  relocated under `results/<lane>/retired-<pin>/`; the two CHERI lanes keep
+  their previous-pin stamps and are excluded from the pin-uniform comparison by
+  design (see the CHERI caveat above). Every statement in this file measured
+  "at `f4c916a`" or "`47d6f9d`" has been re-derived or is explicitly dated to
+  those eras; the lane-comparison snapshot is the measure-on-demand record of
+  how the seven lanes classify at the current pin.
 - **`.claude/` is machine-local and ignored wholesale.** Agent-tooling
   configuration in the repo root is machine-local by the 2026-10-24 policy:
   `.gitignore` covers it alongside `build/`, `results/` and `tmp/`. Unlike the

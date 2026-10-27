@@ -88,6 +88,20 @@ case "$OUT_DIR" in
     ;;
 esac
 
+# ---- pinned bench checkout: HEAD must be BENCH_COMMIT ----
+# Anchored with git -C "$ROOT/benchmark" (this script resolves ROOT but does
+# not cd to it).  A failing git refuses naming the unverifiable state.
+git_rc=0
+bench_head=$(git -C "$ROOT/benchmark" rev-parse HEAD) || git_rc=$?
+if [ "$git_rc" -ne 0 ]; then
+  di "cannot verify the benchmark pin: 'git -C benchmark rev-parse HEAD' failed (rc=$git_rc)"
+  exit 1
+fi
+if [ "$bench_head" != "$BENCH_COMMIT" ]; then
+  di "benchmark submodule is at $bench_head but env.sh pins BENCH_COMMIT=$BENCH_COMMIT"
+  exit 1
+fi
+
 # ---- per-lane toolchain (CXX/ASM/OBJDUMP + objdump-shim prefix) ----
 CHERI_BROOT="$ROOT/$BUILD_DIR/cheri"
 # Emit the clang++ path AS-IS: clang picks its driver mode (C vs C++) from

@@ -6,17 +6,18 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-# 47d6f9d: the delivery blocks are self-contained (f4c916a beneath it declared
-# the expect-results meanings and fixed F2/267 at its source).
-# a09f570 carries the riscv64-nemu-linux platform - the bench's NEMU venue
-# (host-built corpus + riscv64 scheduler in a booted Linux guest under
-# XiangShan NEMU), consumed by the riscv64-nemu lane below.
-# 74195c4 carries the opcode-extraction platform fix: the cheri_riscv64
-# extractor branch, the $(OBJDUMP) pass-through, the extractor hardening and
-# the acc/read-func.cpp parse check (on top of c8c6000's sweep: the continue
-# fix, warning cleanup, catalog hardening, five .asm .size directives,
-# registry diff).
-BENCH_COMMIT=47d6f9d0b99744d36bd857f6da7334036ce215c3
+# f9e4ba7 declares the aarch64 result classes the stamps actually produce - the
+# HWASan/MTE producer set's `99`, and `260` / `19` on the PAuth crash codes - so
+# a lane that behaves as designed no longer reads as out-of-expect.  Beneath it
+# the delivery blocks are self-contained (47d6f9d), the expect-results meanings
+# were declared and F2/267 fixed at source (f4c916a), the riscv64-nemu-linux
+# platform landed (a09f570) and the opcode-extraction fix rode on top (74195c4).
+# f9e4ba7 also rebuilds the NEMU venue's staging: the corpus is cross-built in a
+# scratch tree under out/build/<runset>/tree, the image is packed reproducibly
+# (cpio --reproducible) and the manifest is published only on success.  The
+# tracked registry is never swapped, so the submodule stays clean through a
+# deploy and any dirt in it is a real edit.
+BENCH_COMMIT=f9e4ba7addc2865aacdf70f51e9fd203854f4727
 
 # ---- NEMU venue pins (the riscv64-nemu lane) ----
 # NEMU_DIR/NEMU_BIN are a pair, overridden TOGETHER: NEMU_DIR defaults to the
@@ -64,8 +65,8 @@ QEMU_CPU_RISCV64=rva23s64
 # pinned explicitly so the lane's claim is legible.  max is NOT the default:
 # the unset default's HWCAP is byte-identical to QEMU_CPU=max,pauth=off
 # (hwcap=0x12ffffffb, paca=0 pacg=0), while max and any both give
-# hwcap=0x1effffffb (paca=1 pacg=1) - which is why the pa pin below is
-# load-bearing and this one is not (probe matrix 2026-10-25:
+# hwcap=0x1effffffb (paca=1 pacg=1) - which is why the pa and bti pins
+# below are load-bearing and this one is not (probe matrix 2026-10-25:
 # tmp/verification/2026-10-25-hwcap-pauth-probe).  It already
 # advertises HWCAP2_MTE and enforces tag checks (probe 2026-10-25).  The former
 # spelling max,mte=on is rejected outright by qemu 10.2.1 - no CPU model
@@ -82,6 +83,16 @@ QEMU_CPU_AARCH64_MTE=max
 # smoke-executes a PAC-ret build under this request, so a request the venue
 # cannot honour fails the deploy instead of every case.
 QEMU_CPU_AARCH64_PA=max
+# The bti lane's CPU request, and it is load-bearing: the lane builds with
+# -march=armv8.5-a -mbranch-protection=bti (bench Makefile), and armv8.5-a
+# implies PAuth - so __ARM_FEATURE_PAUTH is defined and bench f9e4ba7's
+# STRIP_PAC() emits `xpaci`, which raises SIGILL on a model without FEAT_PAuth.
+# qemu-aarch64's default model has none (HWCAP_PACA=0); "max" advertises it,
+# so the lane executes the class it builds.  Without this request five RA-hijack
+# records of the 2026-10-27 bti stamp read 256+SIGILL (code 260) and the
+# comparison gate exited 1.  prepare.sh additionally smoke-executes an
+# xpaci-bearing build under this request.
+QEMU_CPU_AARCH64_BTI=max
 QEMU_BIOS_RISCV64=default
 QEMU_MACH_RISCV64=virt
 QEMU_MEM_RISCV64=256
@@ -134,7 +145,7 @@ export AARCH64_CXX AARCH64_CC AARCH64_AS AARCH64_OBJDUMP AARCH64_SYSROOT
 # until qemu-user grew a matching variable, and the version pin is a
 # prepare.sh-only consumer.
 export QEMU_SYSTEM_RISCV64 QEMU_AARCH64 QEMU_CPU_RISCV64
-export QEMU_CPU_AARCH64_MTE QEMU_CPU_AARCH64_PA
+export QEMU_CPU_AARCH64_MTE QEMU_CPU_AARCH64_PA QEMU_CPU_AARCH64_BTI
 export QEMU_BIOS_RISCV64 QEMU_MACH_RISCV64 QEMU_MEM_RISCV64
 export KERNEL_VERSION KERNEL_URL KERNEL_SHA256
 export BUSYBOX_VERSION BUSYBOX_URL BUSYBOX_SHA256

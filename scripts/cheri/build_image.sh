@@ -96,7 +96,7 @@ esac
 
 # ---- shared lane lock (released when this script exits) ----
 mkdir -p "$ROOT/$BUILD_DIR"
-exec 9>"$ROOT/$BUILD_DIR/.lane.lock"
+exec 9>>"$ROOT/$BUILD_DIR/.lane.lock"
 if ! flock -n 9; then
   die "lane busy: $(cat "$ROOT/$BUILD_DIR/.lane.lock" 2>/dev/null || echo unknown) holds $BUILD_DIR/.lane.lock"
 fi
