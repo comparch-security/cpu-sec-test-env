@@ -4,8 +4,9 @@
 #
 # Lanes: x86_64 | aarch64 (variants selected with the enable_aarch64_* flags,
 # whose results land in results/aarch64-<variant>/) | riscv64 (booted Linux
-# under qemu-system-riscv64) | riscv64-nemu (the bench's NEMU venue: a booted
-# Linux guest under XiangShan NEMU - deploy first) | cheri_riscv64 and
+# under qemu-system-riscv64) | riscv64-nemu (the absorbed in-repo NEMU venue
+# package: a booted Linux guest under XiangShan NEMU - deploy first) |
+# cheri_riscv64 and
 # aarch64-morello (CheriBSD purecap guests booted under the CHERI/Morello
 # qemu, corpus delivered over virtio-9p - real lanes since the CHERI
 # bring-up landed).
@@ -253,11 +254,12 @@ dump:
 
 else ifeq ($(ARCH),riscv64-nemu)
 
-# The bench's NEMU venue, wrapped as a lane: the platform scripts under
-# benchmark/platform/riscv64-nemu-linux/ own every venue mechanism, the lane
-# scripts own the lock, the preflights, the supervision and the stamp.  The
-# run leg's bound lives in scripts/riscv64_nemu/run.sh (it supervises the
-# platform leg as its own session), so no outer timeout here.
+# The absorbed NEMU venue package (scripts/riscv64_nemu/venue/), wrapped as a
+# lane: the venue package owns every venue mechanism (image builder, boot
+# driver, guest overlay), the lane scripts own the lock, the preflights, the
+# supervision and the stamp.  The run leg's bound lives in
+# scripts/riscv64_nemu/run.sh (it supervises the venue leg as its own
+# session), so no outer timeout here.
 deploy:
 	@set -e
 	timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/riscv64_nemu/prepare.sh riscv64-nemu
@@ -273,7 +275,7 @@ clean:
 	rm -rf $(BUILD_DIR)/riscv64-nemu
 
 # The corpus is staged host-side under corpus-keyed paths
-# ($OUT/$RUNSET/bench/test/<program>__<key>), so the bench's dump target has
+# ($OUT/bench/test/<program>__<key>), so the bench's dump target has
 # no in-tree test/<program> builds to disassemble.
 dump:
 	@echo "riscv64-nemu dump is unsupported: the corpus is staged corpus-keyed, so there are no in-tree test/<program> builds to disassemble" >&2

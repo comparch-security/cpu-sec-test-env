@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="last-modified" content="2026-10-21">
+    <meta name="last-modified" content="2026-10-31">
     <title>Documentation | cpu-sec-test-env</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -19,12 +19,13 @@
             every supported architecture from a single tree. The benchmark itself
             lives in the <code>benchmark/</code> git submodule, consumed read-only
             at the commit pinned in <code>env.sh</code>: every change a lane needs
-            is an environment change here, never an edit inside the submodule. The
-            riscv64-nemu venue's own <code>build-corpus.sh</code> cross-builds its
-            corpus in a scratch tree under <code>out/build/&lt;runset&gt;/tree</code>
-            and never writes the tracked registry — the deploy's preflight (submodule
-            HEAD equals the pin) and post-assert (tree clean) remain the invariants,
-            and any dirt in the submodule is a real edit.
+            is an environment change here, never an edit inside the submodule. Each
+            system lane's corpus is staged by <code>scripts/common/stage_corpus.sh</code>
+            — a scratch-tree copy of the bench tree driven through the pinned
+            runner's corpus mode — and never writes the tracked registry; the
+            deploy's preflight (submodule HEAD equals the pin) and post-assert
+            (tree clean) remain the invariants, and any dirt in the submodule is a
+            real edit.
         </p>
 
         <p>
@@ -84,14 +85,14 @@
 
         <ul>
             <li><a href="architecture.html">Architecture</a> — how the lane dispatcher
-                works: the lane lock, the pin doctrine, the derived registry, result
+                works: the lane lock, the pin doctrine, corpus staging, result
                 stamps and the trust boundary</li>
             <li><a href="lanes.html">Lanes</a> — the per-lane reference: execution
                 paths, deploy/run mechanics and the load-bearing pins</li>
         </ul>
     </main>
     <footer>
-        <p>Last updated: 2026-10-21</p>
+        <p>Last updated: 2026-10-31</p>
     </footer>
 </body>
 </html>

@@ -3,24 +3,24 @@ set -euo pipefail
 # run.sh LANE   (LANE = riscv64-nemu)
 #
 # Runs the deployed riscv64-nemu image under XiangShan NEMU and publishes the
-# stamp: the bench's NEMU venue (benchmark/platform/riscv64-nemu-linux/run.sh)
-# boots the guest image, the guest prints the result files between
-# ===CSB-...=== markers, and the platform carves them out of boot.log into
-# out/<runset>/runs/<ts>/.  This wrapper owns the lane lock, the preflights,
-# the process supervision, the completeness gate and the stamp collection -
-# no venue mechanism is re-implemented here.
+# stamp: the absorbed venue package (scripts/riscv64_nemu/venue/run.sh) boots
+# the guest image, the guest prints the result files between ===CSB-...===
+# markers, and the driver carves them out of boot.log into runs/<ts>/.  This
+# wrapper owns the lane lock, the preflights, the process supervision, the
+# completeness gate and the stamp collection - no venue mechanism is
+# re-implemented here.
 #
 # Publish policy (the repository's family rule): a timeout (rc 124, either the
-# lane watchdog or the platform's own boot-timeout diagnosis) publishes
+# lane watchdog or the venue's own boot-timeout diagnosis) publishes
 # NOTHING; every other failure publishes a boot.log-only evidence stamp; a
 # success publishes the full stamp.  The completeness gate is evaluated
-# against the platform's run dir BEFORE any result file is copied, so a stamp
+# against the venue's run dir BEFORE any result file is copied, so a stamp
 # never carries results that failed the gate.
 #
-# Process supervision: the platform leg runs in its own session (with the
+# Process supervision: the venue leg runs in its own session (with the
 # lane-lock fd closed, `9>&-`, so no descendant can hold the lock), and a
 # TERM/INT trap kills that whole session and exits non-zero, so the EXIT path
-# still runs.  The platform re-groups inside the session (its inner
+# still runs.  The driver re-groups inside the session (its inner
 # `timeout "$NEMU_TIMEOUT" "$NEMU_BIN"` is a process group of its own), so
 # killing the leg leader's group alone would leave the emulator alive: the
 # kill sweeps every process whose session id is the leg's, then SIGKILLs the
@@ -30,10 +30,10 @@ set -euo pipefail
 # uutils coreutils 0.10.0 - does kill the child's process group when it
 # expires; a marker probe confirmed it, and an earlier note claiming otherwise
 # came from a self-matching `pgrep -f`.)  NEMU_TIMEOUT=$LANE_RUN_TIMEOUT lets
-# the platform diagnose its own boot timeout first.
+# the venue diagnose its own boot timeout first.
 #
-# RUNSET must match the deployed one: the run never picks a different record
-# set than the image carries.
+# The image carries the full tracked registry; the run boots exactly the
+# deployed one (the deploy meta's image sha is re-verified below).
 
 if [ $# -ne 1 ] || [ "$1" != riscv64-nemu ]; then
   echo "usage: $0 riscv64-nemu" >&2
@@ -64,7 +64,7 @@ if ! flock -n 9; then
 fi
 printf '%s\n' "$LANE" > "$BUILD_DIR/.lane.lock"
 
-PLATFORM="$ROOT/benchmark/platform/riscv64-nemu-linux"
+VENUE="$ROOT/scripts/riscv64_nemu/venue"
 OUT="$ROOT/$BUILD_DIR/riscv64-nemu/platform"
 LANE_DIR="$ROOT/$BUILD_DIR/riscv64-nemu"
 LOG="$LANE_DIR/run.log"
@@ -105,37 +105,22 @@ nemu_head=$(git -C "$NEMU_DIR" rev-parse HEAD 2>/dev/null) ||
 [ "$nemu_head" = "$NEMU_COMMIT" ] ||
   die "NEMU checkout $NEMU_DIR is at $nemu_head but NEMU_COMMIT pins $NEMU_COMMIT"
 
-# RUNSET defaults to the runset the deploy recorded (all when none; an
-# existing-but-empty record counts as none).  An explicit value that disagrees
-# with the deployed one is a named error, not a misleading "deploy first".
-RUNSET_EXPLICIT="${RUNSET:-}"
-recorded_runset=$(cat "$ROOT/$BUILD_DIR/riscv64-nemu/runset" 2>/dev/null || true)
-if [ -n "$RUNSET_EXPLICIT" ] && [ -n "$recorded_runset" ] &&
-   [ "$RUNSET_EXPLICIT" != "$recorded_runset" ]; then
-  die "RUNSET=$RUNSET_EXPLICIT but the deployed runset is '$recorded_runset' - re-deploy with RUNSET=$RUNSET_EXPLICIT, or run with RUNSET=$recorded_runset"
-fi
-RUNSET="${RUNSET:-$recorded_runset}"
-[ -n "$RUNSET" ] || RUNSET=all
-case "$RUNSET" in
-  all|acc|cfi|cpi|mss|mts) ;;
-  *) die "RUNSET=$RUNSET is not one of the platform's documented sets: all acc cfi cpi mss mts" ;;
-esac
-[ -f "$OUT/$RUNSET/fw_payload.bin" ] ||
-  die "no $RUNSET image at $OUT/$RUNSET/fw_payload.bin - run make ARCH=riscv64-nemu deploy first"
-# The deploy writes fw_payload.bin before its own out/<runset>/meta.json, so a
-# deploy that died between the two leaves an image whose provenance is absent
-# or stale; booting it would publish a full stamp with contradictory evidence.
-[ -f "$OUT/$RUNSET/meta.json" ] ||
-  die "no deploy meta at $OUT/$RUNSET/meta.json - the deploy did not finish; run make ARCH=riscv64-nemu deploy first"
-live_image_sha=$(sha256sum "$OUT/$RUNSET/fw_payload.bin" | cut -d' ' -f1)
-deploy_image_sha=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["fw_payload_bin"]["sha256"] or "")' "$OUT/$RUNSET/meta.json") ||
-  die "cannot read the deploy meta $OUT/$RUNSET/meta.json - re-run make ARCH=riscv64-nemu deploy"
+[ -f "$OUT/fw_payload.bin" ] ||
+  die "no image at $OUT/fw_payload.bin - run make ARCH=riscv64-nemu deploy first"
+# The deploy writes fw_payload.bin before its own meta.json, so a deploy that
+# died between the two leaves an image whose provenance is absent or stale;
+# booting it would publish a full stamp with contradictory evidence.
+[ -f "$OUT/meta.json" ] ||
+  die "no deploy meta at $OUT/meta.json - the deploy did not finish; run make ARCH=riscv64-nemu deploy first"
+live_image_sha=$(sha256sum "$OUT/fw_payload.bin" | cut -d' ' -f1)
+deploy_image_sha=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["fw_payload_bin"]["sha256"] or "")' "$OUT/meta.json") ||
+  die "cannot read the deploy meta $OUT/meta.json - re-run make ARCH=riscv64-nemu deploy"
 [ "$live_image_sha" = "$deploy_image_sha" ] ||
-  die "the image at $OUT/$RUNSET/fw_payload.bin (sha256 $live_image_sha) does not match its deploy meta ($OUT/$RUNSET/meta.json records ${deploy_image_sha:-nothing}) - re-run make ARCH=riscv64-nemu deploy"
-export OUT RUNSET
+  die "the image at $OUT/fw_payload.bin (sha256 $live_image_sha) does not match its deploy meta ($OUT/meta.json records ${deploy_image_sha:-nothing}) - re-run make ARCH=riscv64-nemu deploy"
+export OUT
 
 mkdir -p "$LANE_DIR"
-RUNS="$OUT/$RUNSET/runs"
+RUNS="$OUT/runs"
 SNAP="$LANE_DIR/runs.snapshot"
 : > "$SNAP"
 [ -d "$RUNS" ] && find "$RUNS" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort > "$SNAP"
@@ -164,9 +149,11 @@ resolve_run_dir() {
   return 0
 }
 
-# ---- the completeness gate: against the platform's run dir, before any copy ----
+# ---- the completeness gate: against the venue's run dir, before any copy ----
+# The reference is the registry the image carries - the tracked bench registry,
+# copied verbatim at deploy time (stage_corpus.sh verified it byte-identical).
 completeness_gate() { # results.json
-  python3 - "$1" "$OUT/$RUNSET/configure.json" <<'PY'
+  python3 - "$1" "$OUT/bench/configure.json" <<'PY'
 import json, sys
 res, reg = (json.load(open(p)) for p in sys.argv[1:3])
 missing = sorted(set(reg) - set(res))
@@ -189,7 +176,7 @@ cleanup() {
   else
     mkdir -p "$DEST"
     # Console evidence is mandatory on every non-timeout path: the run dir's
-    # boot.log when one was resolved, else the lane's own log (the platform's
+    # boot.log when one was resolved, else the lane's own log (the venue's
     # stdout/stderr, created before the leg launches).
     if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/boot.log" ]; then
       cp -f "$RUN_DIR/boot.log" "$DEST/"
@@ -201,7 +188,7 @@ cleanup() {
         [ -f "$RUN_DIR/$f" ] && cp -f "$RUN_DIR/$f" "$DEST/"
       done
       cp -f "$RUN_DIR/meta.json" "$DEST/"
-      cp -f "$OUT/$RUNSET/meta.json" "$DEST/meta.deploy.json"
+      cp -f "$OUT/meta.json" "$DEST/meta.deploy.json"
     fi
     ENABLE_FLAG="" RUN_STATUS="$rc" bash scripts/common/version_stamp.sh riscv64-nemu "$DEST/versions.txt"
     nemu_bin_path=$(realpath "$NEMU_BIN" 2>/dev/null || printf '%s\n' "$NEMU_BIN")
@@ -262,7 +249,7 @@ leg_session_pids() { # sid
   return 0
 }
 
-# Kill the platform leg's whole session.  The platform re-groups inside it (its
+# Kill the venue leg's whole session.  The driver re-groups inside it (its
 # inner `timeout NEMU`), so the leg leader's process group is not enough: TERM
 # the group, TERM the rest of the session, give it a moment, then SIGKILL the
 # survivors.  The children run with fd 9 closed, so no survivor can hold
@@ -286,7 +273,7 @@ kill_leg() {
 term_leg() {
   trap - TERM INT
   kill_leg
-  # The platform creates its run dir before booting; resolve it here so the
+  # The venue driver creates its run dir before booting; resolve it here so the
   # EXIT publish can carry its boot.log (falling back to $LOG otherwise).
   resolve_run_dir
   exit 130
@@ -294,24 +281,24 @@ term_leg() {
 trap term_leg TERM INT
 trap cleanup EXIT
 
-echo "== booting the $RUNSET image under $NEMU_BIN (NEMU_TIMEOUT=${LANE_RUN_TIMEOUT}s, watchdog $((LANE_RUN_TIMEOUT + 120))s)"
-echo "   platform log: $LOG"
+echo "== booting the deployed image under $NEMU_BIN (NEMU_TIMEOUT=${LANE_RUN_TIMEOUT}s, watchdog $((LANE_RUN_TIMEOUT + 120))s)"
+echo "   venue log: $LOG"
 export NEMU_TIMEOUT="$LANE_RUN_TIMEOUT"
 : > "$LOG"
-setsid timeout "$((LANE_RUN_TIMEOUT + 120))" bash "$PLATFORM/run.sh" >"$LOG" 2>&1 9>&- &
+setsid timeout "$((LANE_RUN_TIMEOUT + 120))" bash "$VENUE/run.sh" >"$LOG" 2>&1 9>&- &
 LEG_PID=$!
 leg_rc=0
 wait "$LEG_PID" || leg_rc=$?
 
 # A timeout is the one outcome that publishes nothing: the lane watchdog
-# (124) or the platform's own boot-timeout diagnosis.  The text match mirrors
-# benchmark/platform/riscv64-nemu-linux/run.sh, whose inner timeout fires first
+# (124) or the venue's own boot-timeout diagnosis.  The text match mirrors
+# scripts/riscv64_nemu/venue/run.sh, whose inner timeout fires first
 # (NEMU_TIMEOUT is forwarded above) and prints "NEMU timed out after <n> s";
-# that message lives in the read-only submodule, so re-verify this match
-# whenever BENCH_COMMIT moves - a reworded message would silently turn a
-# timeout into a boot.log-only evidence stamp.  LEG_PID is kept through these
-# checks so the whole leg session is killed here: a timed-out platform leg must
-# leave no descendant writing the platform tree.
+# that message is the venue package's own, so a reword there must re-verify
+# this match - a changed message would silently turn a timeout into a
+# boot.log-only evidence stamp.  LEG_PID is kept through these checks so the
+# whole leg session is killed here: a timed-out venue leg must leave no
+# descendant writing the venue tree.
 if [ "$leg_rc" -eq 124 ] || grep -q "NEMU timed out" "$LOG"; then
   kill_leg
   LEG_PID=""
@@ -319,12 +306,12 @@ if [ "$leg_rc" -eq 124 ] || grep -q "NEMU timed out" "$LOG"; then
 fi
 LEG_PID=""
 
-# The platform creates its run dir before booting; the leg must leave exactly
-# one new one under runs/.
+# The venue driver creates its run dir before booting; the leg must leave
+# exactly one new one under runs/.
 mapfile -t new_runs < <(new_run_dirs)
 if [ "$leg_rc" -ne 0 ]; then
   if [ "${#new_runs[@]}" -eq 1 ]; then RUN_DIR="$RUNS/${new_runs[0]}"; fi
-  die "the platform run.sh exited $leg_rc (see $LOG); new run dirs under $RUNS: ${#new_runs[@]} (${new_runs[*]:-none})"
+  die "the venue run.sh exited $leg_rc (see $LOG); new run dirs under $RUNS: ${#new_runs[@]} (${new_runs[*]:-none})"
 fi
 [ "${#new_runs[@]}" -eq 1 ] ||
   die "expected exactly one new run dir under $RUNS, found ${#new_runs[@]} (${new_runs[*]:-none})"
@@ -333,22 +320,22 @@ RUN_DIR="$RUNS/${new_runs[0]}"
 # ---- the recorded binary must be the executed one ----
 live_sha=$(sha256sum "$NEMU_BIN" | cut -d' ' -f1)
 recorded_sha=$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("nemu_bin") or {}).get("sha256") or "")' "$RUN_DIR/meta.json") ||
-  die "cannot read the run meta $RUN_DIR/meta.json - the platform run did not finish its meta write"
+  die "cannot read the run meta $RUN_DIR/meta.json - the venue run did not finish its meta write"
 [ "$live_sha" = "$recorded_sha" ] ||
   die "NEMU binary changed across the run: live sha256 $live_sha, run meta records $recorded_sha ($NEMU_BIN)"
 # ... and the deployed binary: a rebuild between deploy and run is caught here,
 # not only the same-run value above.
-deploy_nemu_sha=$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("nemu_bin") or {}).get("sha256") or "")' "$OUT/$RUNSET/meta.json") ||
-  die "cannot read the deploy meta $OUT/$RUNSET/meta.json - re-run make ARCH=riscv64-nemu deploy"
+deploy_nemu_sha=$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("nemu_bin") or {}).get("sha256") or "")' "$OUT/meta.json") ||
+  die "cannot read the deploy meta $OUT/meta.json - re-run make ARCH=riscv64-nemu deploy"
 [ "$live_sha" = "$deploy_nemu_sha" ] ||
-  die "the NEMU binary $NEMU_BIN (sha256 $live_sha) is not the one the deploy recorded (${deploy_nemu_sha:-nothing} in $OUT/$RUNSET/meta.json) - restore it, or rebuild and re-deploy"
+  die "the NEMU binary $NEMU_BIN (sha256 $live_sha) is not the one the deploy recorded (${deploy_nemu_sha:-nothing} in $OUT/meta.json) - restore it, or rebuild and re-deploy"
 
 # The run meta's image sha must be the deploy meta's: a deploy that died
 # between the image write and its meta write would otherwise reach the full
 # stamp as contradictory provenance.  A mismatch takes the evidence-stamp path
 # with a non-zero exit.
 run_image_sha=$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("image") or {}).get("sha256") or "")' "$RUN_DIR/meta.json") ||
-  die "cannot read the run meta $RUN_DIR/meta.json - the platform run did not finish its meta write"
+  die "cannot read the run meta $RUN_DIR/meta.json - the venue run did not finish its meta write"
 [ "$run_image_sha" = "$deploy_image_sha" ] ||
   die "the run booted image sha256 $run_image_sha but meta.deploy.json records $deploy_image_sha - refusing the full stamp"
 

@@ -4,9 +4,11 @@ set -euo pipefail
 #
 # Deploys the riscv64 system lane's bootable image:
 #   1. lane advisory lock + EXIT trap (make -C benchmark clean + submodule-
-#      clean assert on every exit path - the corpus build dirties test/);
-#   2. cross-builds the corpus with build_corpus.sh (derived registry +
-#      145 staged units + 1 side file + finalized manifest);
+#      clean assert on every exit path - the scheduler cross build dirties
+#      test/; the corpus staging itself never touches the worktree);
+#   2. stages the corpus with scripts/common/stage_corpus.sh (the tracked
+#      registry verbatim + the runner's corpus-keyed units + the registry's
+#      side files + the declared support files + the verified manifest);
 #   3. cross-builds the scheduler (run-test) and lib/common/libcfi.so with
 #      `make -B` (GNU make does not rebuild on variable changes alone);
 #   4. asserts the pinned -cpu model is an RVA23 profile (rva23s64/rva23u64 -
@@ -71,8 +73,8 @@ trap cleanup EXIT
 [ -x "$BUILDD/busybox-root/bin/busybox" ] ||
   die "$BUILDD/busybox-root/bin/busybox missing - run build_busybox.sh first"
 
-# ---- corpus (derived registry + units + side files + manifest) ----
-bash "$ROOT/scripts/common/build_corpus.sh" "$LANE" "$CORPUS"
+# ---- corpus (tracked registry verbatim + keyed units + side/support files) ----
+bash "$ROOT/scripts/common/stage_corpus.sh" "$LANE" "$CORPUS"
 
 # ---- scheduler + libcfi, cross-built with -B ----
 SHIM_DIR="$BUILDD/shim"
@@ -141,7 +143,7 @@ while IFS= read -r -d '' f; do STAGED_ELFS+=("$f"); done < <(find "$STAGE/bench/
 mapfile -d '' -t SIDE_BASENAMES < <(python3 - "$CORPUS/manifest.json" <<'PY'
 import json, sys
 for e in json.load(open(sys.argv[1]))["side_files"]:
-    sys.stdout.buffer.write(e["file"].split("/")[-1].encode() + b"\0")
+    sys.stdout.buffer.write(e["name"].split("/")[-1].encode() + b"\0")
 PY
 )
 is_side_file() { local b=${1##*/} s
@@ -259,7 +261,8 @@ manifest = {
         "sha256": sha256(corpus_manifest),
         "units": len(corpus["units"]),
         "side_files": len(corpus["side_files"]),
-        "expected_failures": corpus["expected_failures"],
+        "support_files": len(corpus["support_files"]),
+        "skipped": corpus["skipped"],
     },
 }
 with open(out, "w") as fh:

@@ -229,7 +229,7 @@ run_cheribuild --cheribsd/extra-env="CPATH=$ROOT/$CHERI_CROSS_CPATH" cheribsd-mo
 # ---- observe the built artifacts (never assume a layout) ----
 # The --pretend run observed: installsysroot writes the packaged sysroot
 # to output/sdk/sysroot-<xtarget> (the value the CHERI_SYSROOT_* pins
-# must carry - what build_corpus.sh consumes in Step 8), and installkernel
+# must carry - what the CHERI lanes' corpus staging consumes), and installkernel
 # writes into output/rootfs-<xtarget> (so the riscv64 lane's -kernel
 # input lives under output/rootfs-<xtarget>/boot/kernel/). Both are
 # discovered post-build here; the sdk sysroot form is preferred, then the

@@ -21,9 +21,9 @@ set -euo pipefail
 #     objdump cannot read a Morello purecap ELF, Step 10 takes one of those.)
 #   - a host scheduler smoke build (ARCH=aarch64 CXX=g++, no enable flag) staged
 #     as build/aarch64-morello/run-test.host, mirroring aarch64/prepare.sh;
-#   - the corpus staged by scripts/common/build_corpus.sh (derived registry via
-#     --env-lane aarch64-morello, one cross compile per unit carrying the purecap
-#     --sysroot) into the lane payload dir;
+#   - the corpus staged by scripts/common/stage_corpus.sh (the tracked registry
+#     verbatim; the runner owns keying and skip handling, and every cross
+#     compile carries the purecap --sysroot) into the lane payload dir;
 #   - the cross-built guest scheduler run-test + lib/common/libcfi.so and the
 #     guest runner staged into the same payload dir - the corpus-in 9p share root
 #     run.sh hands the guest.
@@ -112,8 +112,10 @@ case "$machine" in
 esac
 
 # ---- corpus staging (riscv64-style) into the payload dir ----
-bash "$ROOT/scripts/common/build_corpus.sh" "$TOKEN" "$PAYLOAD" \
-  --env-lane "$LANE" --enable-flag "$ENABLE_FLAG"
+# The skip token is the bench's distinct aarch64-morello token, baked into the
+# staged runner; the lane table supplies enable_aarch64_morello to the build.
+bash "$ROOT/scripts/common/stage_corpus.sh" "$LANE" "$PAYLOAD" \
+  --enable-flag "$ENABLE_FLAG"
 
 # ---- cross-built guest scheduler + libcfi, staged for the guest ----
 # The CXX carries the purecap sysroot: the pinned enable_aarch64_morello block

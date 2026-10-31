@@ -6,18 +6,19 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-# f9e4ba7 declares the aarch64 result classes the stamps actually produce - the
-# HWASan/MTE producer set's `99`, and `260` / `19` on the PAuth crash codes - so
-# a lane that behaves as designed no longer reads as out-of-expect.  Beneath it
-# the delivery blocks are self-contained (47d6f9d), the expect-results meanings
-# were declared and F2/267 fixed at source (f4c916a), the riscv64-nemu-linux
-# platform landed (a09f570) and the opcode-extraction fix rode on top (74195c4).
-# f9e4ba7 also rebuilds the NEMU venue's staging: the corpus is cross-built in a
-# scratch tree under out/build/<runset>/tree, the image is packed reproducibly
-# (cpio --reproducible) and the manifest is published only on success.  The
-# tracked registry is never swapped, so the submodule stays clean through a
-# deploy and any dirt in it is a real edit.
-BENCH_COMMIT=f9e4ba7addc2865aacdf70f51e9fd203854f4727
+# cbe3bf9 makes the benchmark a portable core: the embedded venue
+# (platform/riscv64-nemu-linux) is gone - this repository stages every system
+# lane's corpus itself, in a scratch tree, and carries the NEMU venue package -
+# and the CHERI/Morello build skips are declared in the tracked registry, where
+# a record's `skip` list names the arch token it does not build on with its
+# cause.  The Morello build bakes a distinct arch token (aarch64-morello), so
+# its rows cannot collide with the healthy aarch64 lanes.  Beneath it: the
+# aarch64 result classes the stamps produce (f9e4ba7), self-contained delivery
+# blocks (47d6f9d), declared expect-results with F2/267 fixed at source
+# (f4c916a), the scheduler's corpus mode (a09f570) and the opcode-extraction
+# fix (74195c4).  The tracked registry is never swapped, so the submodule stays
+# clean through a deploy and any dirt in it is a real edit.
+BENCH_COMMIT=cbe3bf9b67c8ca8b8eca9567ad3d09ca10dade1a
 
 # ---- NEMU venue pins (the riscv64-nemu lane) ----
 # NEMU_DIR/NEMU_BIN are a pair, overridden TOGETHER: NEMU_DIR defaults to the
@@ -31,6 +32,17 @@ BENCH_COMMIT=f9e4ba7addc2865aacdf70f51e9fd203854f4727
 : "${NEMU_DIR:=../NEMU}"
 : "${NEMU_BIN:=$NEMU_DIR/build/riscv64-nemu-interpreter}"
 NEMU_COMMIT=ae1ec3cd869b9c5e1783af691538d5c26f37ee55
+
+# The guest image's upstream inputs, driven by the absorbed venue package
+# (scripts/riscv64_nemu/venue/build-image.sh): workload-builder's assembler
+# scripts, and the two bootloader sources they build.  The kernel and busybox
+# tarballs are the KERNEL_* / BUSYBOX_* pins below - one pin per input, here.
+NEMU_WB_COMMIT=b7c321dec6ad6f4c78abcaefc722b59b4043503c
+NEMU_WB_URL=https://github.com/OpenXiangShan/workload-builder
+NEMU_OPENSBI_COMMIT=cbf9f6734dd85a982c63e3cb5db7ffe09da839ca
+NEMU_OPENSBI_URL=https://github.com/riscv-software-src/opensbi
+NEMU_LCA_COMMIT=5169da768d18f4682a489eaabe7c071df6d6ef88
+NEMU_LCA_URL=https://github.com/openxiangshan/LibCheckpointAlpha
 
 # ---- cross toolchains (Ubuntu gcc-13 cross packages) ----
 RISCV64_CXX=riscv64-linux-gnu-g++-13
@@ -139,6 +151,8 @@ STAMP_PACKAGES="qemu-system-riscv qemu-user qemu-user-binfmt gcc-13-riscv64-linu
 
 export BENCH_COMMIT
 export NEMU_DIR NEMU_BIN NEMU_COMMIT
+export NEMU_WB_COMMIT NEMU_WB_URL NEMU_OPENSBI_COMMIT NEMU_OPENSBI_URL
+export NEMU_LCA_COMMIT NEMU_LCA_URL
 export RISCV64_CXX RISCV64_CC RISCV64_AS RISCV64_OBJDUMP
 export AARCH64_CXX AARCH64_CC AARCH64_AS AARCH64_OBJDUMP AARCH64_SYSROOT
 # QEMU_PIN_VERSION is deliberately absent: exporting it would be harmless only

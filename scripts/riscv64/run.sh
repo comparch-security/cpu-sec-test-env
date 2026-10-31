@@ -7,7 +7,8 @@ set -euo pipefail
 # with the stamped results directory exported to the guest over virtio-9p.
 # The guest
 # (scripts/riscv64/guest/init) runs the prebuilt corpus with
-# `./run-test no-make exhausted-run` and copies its results onto the share;
+# `./run-test no-make corpus exhausted-run` and copies its results onto the
+# share;
 # no console parsing, no privileges.
 #
 # An EXIT trap collects whatever the guest left on the share into

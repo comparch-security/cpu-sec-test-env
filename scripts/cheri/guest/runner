@@ -34,8 +34,9 @@
 #                      /tmp/bench).  Absent run-test is not fatal: the run
 #                      records "not-staged" so share mechanics stay testable
 #                      before Step 8 stages the payload.
-#   RUN_TEST_ARGS      default "no-make exhausted-run" (the corpus is
-#                      prebuilt in-host; the guest must never make)
+#   RUN_TEST_ARGS      default "no-make corpus exhausted-run" (the corpus is
+#                      prebuilt in-host and corpus-keyed; the guest must never
+#                      make)
 #   RUNNER_POWEROFF    =1 -> shutdown -p now after the handshake is written
 
 set -eu
@@ -43,7 +44,7 @@ set -eu
 CORPUS_IN_MNT=${CORPUS_IN_MNT:-/tmp/corpus-in}
 RESULTS_OUT_MNT=${RESULTS_OUT_MNT:-/tmp/results-out}
 BENCH_DIR=${BENCH_DIR:-/tmp/bench}
-RUN_TEST_ARGS=${RUN_TEST_ARGS:-no-make exhausted-run}
+RUN_TEST_ARGS=${RUN_TEST_ARGS:-no-make corpus exhausted-run}
 RUNNER_POWEROFF=${RUNNER_POWEROFF:-0}
 RUN_RC=not-started
 

@@ -7,8 +7,9 @@
 #   - writes the guest-truth test/sys_info.txt (guest uname -a + cpuinfo +
 #     the pin/dpkg lines of the staged versions.host.txt, never its
 #     host-uname line) so results.dat records the guest venue, not the host;
-#   - runs ./run-test no-make exhausted-run from /bench (the corpus is
-#     prebuilt; the scheduler must not try to make in the guest);
+#   - runs ./run-test no-make corpus exhausted-run from /bench (the corpus is
+#     prebuilt and corpus-keyed; the scheduler must not try to make in the
+#     guest, and corpus mode is what selects test/<program>__<key>);
 #   - copies results.json/results.dat/variables.json to the share, syncs
 #     twice, writes guest-status.txt, and poweroffs.
 # The EXIT trap guarantees the sync, the status marker and the poweroff even
@@ -64,7 +65,7 @@ mount -t 9p -o trans=virtio,version=9p2000.L,cache=none "$SHARE_TAG" "$SHARE_MNT
 
 cd "$BENCH"
 set +e
-./run-test no-make exhausted-run
+./run-test no-make corpus exhausted-run
 RUN_RC=$?
 set -e
 

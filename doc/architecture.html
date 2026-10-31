@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="last-modified" content="2026-10-20">
+    <meta name="last-modified" content="2026-10-31">
     <title>Architecture | cpu-sec-test-env</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -68,34 +68,38 @@
             fail at the wrong moment; the submodule's <code>HEAD</code> is asserted
             equal to the pinned bench commit at every point the worktree is about
             to be consumed — the x86_64 <code>deploy</code>, the aarch64 lanes'
-            prepare and run scripts, the shared corpus builder, and the
-            riscv64-nemu lane's <code>deploy</code> and <code>run</code>, which
+            prepare and run scripts, the shared corpus staging orchestrator, and
+            the riscv64-nemu lane's <code>deploy</code> and <code>run</code>, which
             additionally re-check the submodule's cleanliness alongside the NEMU
             checkout's own pin. A <code>git</code> that fails never reads as a
             verified pin: every one of these checks captures its exit status and
             refuses, naming the unverifiable state.
         </p>
 
-        <h2>Deploy and the derived registry</h2>
+        <h2>Deploy and corpus staging</h2>
 
         <p>
             The system lanes' <code>deploy</code> stages what their run needs: the
             riscv64 lane builds a byte-reproducible kernel + busybox + rootfs image,
             and the CHERI lanes build their emulators and pinned disk images (a cold
             deploy is a world build); the host lanes' prepare builds only the
-            scheduler, and the corpus is compiled on demand during the run. Deploy
-            also derives the lane's registry —
-            <code>scripts/common/derive_registry.py</code> declares per-lane skips
-            and expected failures at deploy time, so the platform caveats are
-            derived, never hard-coded in the bench. The same step writes
-            <code>manifest.json</code>: the corpus as deployed, the per-unit
-            digests and the declared expectations. The riscv64-nemu lane is the
-            deliberate exception: its deploy drives the bench's own platform
-            scripts (<code>benchmark/platform/riscv64-nemu-linux/</code>), which
-            derive their runset registry themselves, so
-            <code>derive_registry.py</code> is not in that path — the lane's
-            completeness gate compares the run's record set against that deployed
-            registry instead.
+            scheduler, and the corpus is compiled on demand during the run. Every
+            system lane's corpus is staged by one orchestrator,
+            <code>scripts/common/stage_corpus.sh</code>: it copies the bench tree
+            into a scratch tree under the lane's <code>build/</code> area and drives
+            the pinned bench runner's corpus mode there — the runner owns corpus
+            keying and skip handling, so this repository never re-derives keys or
+            rewrites skip tokens, and the staged tree carries the bench's tracked
+            <code>configure.json</code> verbatim.
+            <code>scripts/common/corpus_manifest.py</code> then verifies the staged
+            set against the tracked registry (the registry's units minus the rows
+            whose <code>skip</code> names the lane's token) and writes
+            <code>manifest.json</code>: the corpus as staged, the per-unit digests,
+            the side and support files, and the skipped records with their declared
+            reasons. The riscv64-nemu lane stages through the same orchestrator and
+            boots the image the absorbed venue package
+            (<code>scripts/riscv64_nemu/venue/</code>) assembled; its completeness
+            gate compares the run's record set against the staged verbatim registry.
         </p>
 
         <h2>The opcode-extraction shim</h2>
@@ -166,7 +170,7 @@
         </p>
     </main>
     <footer>
-        <p>Last updated: 2026-10-20 — keep in sync with the <code>Makefile</code>
+        <p>Last updated: 2026-10-31 — keep in sync with the <code>Makefile</code>
             and <code>scripts/</code>.</p>
     </footer>
 </body>

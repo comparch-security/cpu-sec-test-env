@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="last-modified" content="2026-10-26">
+    <meta name="last-modified" content="2026-10-31">
     <title>Lanes | cpu-sec-test-env</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -204,37 +204,53 @@
             would be a latent illegal instruction inside the guest's own libc —
             and exports a share directory to the guest over virtio-9p (the result
             stamp itself is created afterwards, from what the guest left there); the
-            guest init runs the prebuilt corpus and copies its results back. There is no
+            guest init runs <code>./run-test no-make corpus exhausted-run</code> on
+            the staged corpus and copies its results back. There is no
             console parsing and no <code>dump</code> target: the binaries live
             inside the guest image.
         </p>
 
         <h2>riscv64-nemu</h2>
         <p>
-            The bench's own NEMU venue, wrapped as a lane.
+            The absorbed NEMU venue package
+            (<code>scripts/riscv64_nemu/venue/</code>), wrapped as a lane.
             <code>prepare.sh</code> takes the lane lock, then preflights in one
             block before any build: the bench submodule at the pinned commit
             <em>and clean</em> — the deploy's two invariants (HEAD equals
-            <code>BENCH_COMMIT</code>, tree clean). The venue cross-builds its
-            corpus in a scratch tree under <code>out/build/&lt;runset&gt;/tree</code>
-            and never writes the tracked registry, so any dirt in the submodule
-            is a real edit and is named as such; a failing <code>git</code> is
-            refused as unverifiable, never read as clean. The preflight also
+            <code>BENCH_COMMIT</code>, tree clean). The corpus is staged by the
+            shared orchestrator (<code>scripts/common/stage_corpus.sh</code>) in a
+            scratch tree under the lane's <code>build/</code> area, driving the
+            pinned bench runner's corpus mode — keying and skip handling are the
+            runner's, the tracked <code>configure.json</code> is copied verbatim,
+            and any dirt in the submodule is a real edit and is named as such; a
+            failing <code>git</code> is
+            refused as unverifiable, never read as clean. There is no runset: the
+            lane stages the full tracked registry. The preflight also
             checks the resolved <code>NEMU_BIN</code>, and the NEMU
             checkout's <code>HEAD</code> against <code>NEMU_COMMIT</code> — never
             the binary's provenance, which is recorded instead (path,
             <code>describe --always --dirty</code>, sha256) and compared
             run-to-run. <code>NEMU_DIR</code>/<code>NEMU_BIN</code> are a
             relative-default pair resolved against this repo's root. The deploy
-            then runs the venue's own <code>build-corpus.sh</code> and
-            <code>build-image.sh</code> with <code>OUT</code> under
-            <code>build/riscv64-nemu/</code>, unsetting
-            <code>ARCH</code>/<code>MAKEFLAGS</code> first so the scheduler's
-            child makes do not inherit this dispatcher's lane name, and records
-            the runset it built. <code>run.sh</code> requires that runset (an
-            explicit mismatch fails naming both), boots the image under the
-            pinned NEMU with <code>NEMU_TIMEOUT</code> forwarded so the platform
-            diagnoses its own boot timeout first, and supervises both legs as
+            then runs the absorbed package's <code>build-image.sh</code>, which
+            consumes the staged corpus and performs the steps the venue's old
+            <code>build-corpus.sh</code> uniquely owned: the cross-built guest
+            scheduler, the <code>NEEDED</code>+<code>PT_INTERP</code> library
+            closure, and the guest-truth <code>bench/test/sys_info.txt</code>
+            (the lane line, the corpus compiler and objdump versions,
+            <code>BENCH_COMMIT</code>, worktree describe) that prefixes the
+            lane's <code>results.dat</code>. Its output sits flat under
+            <code>build/riscv64-nemu/platform/</code> (firmware, the guest
+            <code>bench/</code>, <code>lib/</code>, <code>runs/</code>, the two
+            metas), with <code>ARCH</code>/<code>MAKEFLAGS</code> unset first so
+            the scheduler's child makes do not inherit this dispatcher's lane
+            name. <code>run.sh</code>
+            boots the image under the pinned NEMU with <code>NEMU_TIMEOUT</code>
+            forwarded so the platform
+            diagnoses its own boot timeout first — the boot driver's literal
+            <code>NEMU timed out</code> message is what the wrapper greps for, so
+            the absorbed <code>venue/run.sh</code> is the source of truth for
+            that string — and supervises both legs as
             their own sessions with the lane-lock fd closed
             (<code>9&gt;&amp;-</code>), so the lane's own bound owns the kill
             rather than the outer <code>timeout</code>: the TERM/124 kill sweeps
@@ -246,8 +262,8 @@
             <code>boot.log</code> is part of every non-timeout stamp — the run
             dir's own log when one was created, else the lane's platform log
             copied under that name. The completeness gate
-            compares the run's record set against the deployed runset's derived
-            registry <em>before</em> any result file reaches the stamp: a gate
+            compares the run's record set against the staged verbatim registry
+            <em>before</em> any result file reaches the stamp: a gate
             failure publishes a <code>boot.log</code> + <code>versions.txt</code>
             evidence stamp only, and a timeout publishes nothing. The corpus
             never executes as host code — NEMU interprets every guest
@@ -264,7 +280,10 @@
             load-bearing (the pinned firmware never sets
             <code>menvcfg.STCE</code>, and without the pin the guest panics at
             clock init). The corpus is handed in over a read-only virtio-9p share
-            and results are collected from a writable one; a host-side console
+            and results are collected from a writable one; the guest runner
+            executes the corpus in corpus mode
+            (<code>./run-test no-make corpus exhausted-run</code>, its default
+            argument set); a host-side console
             driver logs into the serial pty, synchronises on echo tokens, and
             drives the run. Deploy splits its timeouts deliberately: the cheap
             legs carry the lane deploy timeout while the emulator and image builds
@@ -293,7 +312,7 @@
         </p>
     </main>
     <footer>
-        <p>Last updated: 2026-10-26 — keep in sync with <code>env.sh</code> and
+        <p>Last updated: 2026-10-31 — keep in sync with <code>env.sh</code> and
             <code>scripts/</code>.</p>
     </footer>
 </body>

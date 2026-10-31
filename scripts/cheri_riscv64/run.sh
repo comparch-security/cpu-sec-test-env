@@ -10,8 +10,9 @@ set -euo pipefail
 # as root, drives the guest to mount both shares, copy the payload to a
 # writable dir and run the guest runner, then publish the handshake.
 #
-# The guest scheduler runs `run-test no-make exhausted-run` (the corpus is
-# prebuilt host-side; the guest must never make), writes results.json into the
+# The guest scheduler runs `run-test no-make corpus exhausted-run` (the corpus
+# is prebuilt and corpus-keyed host-side; the guest must never make), writes
+# results.json into the
 # writable dir, and the runner copies results out and writes guest-status.txt
 # on the results-out share - the same handshake contract as the riscv64 lane
 # (scripts/riscv64/guest/init).  The host never parses console output.

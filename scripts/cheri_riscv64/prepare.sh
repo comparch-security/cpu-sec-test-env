@@ -17,9 +17,9 @@ set -euo pipefail
 #     an xcheri binary); the extraction itself gets that tool via OBJDUMP;
 #   - a host scheduler smoke build (ARCH=cheri_riscv64 CXX=g++, no enable flag)
 #     staged as build/cheri_riscv64/run-test.host, mirroring aarch64/prepare.sh;
-#   - the corpus staged by scripts/common/build_corpus.sh (derived registry via
-#     --env-lane, one cross compile per unit carrying the purecap --sysroot) into
-#     the lane payload dir;
+#   - the corpus staged by scripts/common/stage_corpus.sh (the tracked registry
+#     verbatim; the runner owns keying and skip handling, and every cross
+#     compile carries the purecap --sysroot) into the lane payload dir;
 #   - the cross-built guest scheduler run-test + lib/common/libcfi.so and the
 #     guest runner staged into the same payload dir - that dir is the corpus-in
 #     9p share root run.sh hands the guest.
@@ -116,8 +116,9 @@ case "$machine" in
 esac
 
 # ---- corpus staging (riscv64-style) into the payload dir ----
-bash "$ROOT/scripts/common/build_corpus.sh" "$TOKEN" "$PAYLOAD" \
-  --env-lane "$LANE" --enable-flag "$ENABLE_FLAG"
+# The skip token rides the staged runner's baked CSB_TARGET_ARCH; the lane's
+# enable flag is the staging script's own lane-table entry.
+bash "$ROOT/scripts/common/stage_corpus.sh" "$LANE" "$PAYLOAD"
 
 # ---- cross-built guest scheduler + libcfi, staged for the guest ----
 # run-test and lib/common/libcfi.so link the purecap corpus; the CXX carries

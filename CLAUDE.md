@@ -7,10 +7,10 @@ Project-level guidance for Claude Code and its subagents working in this reposit
 The lane dispatcher that builds and runs the cpu-sec-bench security benchmark on every
 supported architecture from one repository: x86_64 (native host processes — the reference
 lane), aarch64 (through the kernel's binfmt handler under qemu-aarch64, with pa/bti/mte
-variants), riscv64 (a Linux guest under qemu-system-riscv64), riscv64-nemu (the bench's own
-NEMU venue — the workspace's XiangShan NEMU interpreting a Linux guest), and the two
-CheriBSD lanes, cheri_riscv64 and aarch64-morello. The benchmark itself lives in the
-`benchmark/` submodule, consumed read-only at the commit pinned in `env.sh`.
+variants), riscv64 (a Linux guest under qemu-system-riscv64), riscv64-nemu (the absorbed
+in-repo NEMU venue package — the workspace's XiangShan NEMU interpreting a Linux guest),
+and the two CheriBSD lanes, cheri_riscv64 and aarch64-morello. The benchmark itself lives
+in the `benchmark/` submodule, consumed read-only at the commit pinned in `env.sh`.
 
 ## Rules
 
@@ -25,11 +25,13 @@ CheriBSD lanes, cheri_riscv64 and aarch64-morello. The benchmark itself lives in
   in sync by the hooks below.
 - **`benchmark/` is read-only at the pin.** Never edit inside the submodule from this repo:
   bench-side changes land in the bench repo and are consumed here by bumping
-  `BENCH_COMMIT` in `env.sh`. The riscv64-nemu lane's deploy drives the venue's own
-  `build-corpus.sh`, which cross-builds the corpus in a scratch tree under
-  `out/build/<runset>/tree` and never writes the tracked registry — the deploy's
-  preflight (submodule HEAD equals `BENCH_COMMIT`) and post-assert (tree clean) stay
-  invariants, and any dirt in the submodule is a real edit.
+  `BENCH_COMMIT` in `env.sh`. Every system lane's corpus is staged by
+  `scripts/common/stage_corpus.sh` in a scratch tree (a private copy of the bench tree
+  under the lane's `build/` area) by driving the pinned bench runner's corpus mode —
+  keying, skip handling and the registry copy are the runner's, never re-derived here;
+  the deploy preflight (worktree HEAD equals `BENCH_COMMIT`) and post-assert
+  (`git -C benchmark status --short` empty) stay invariants, and any dirt in the
+  submodule is a real edit.
 - **The host lanes' collectors treat `results.json` and `results.dat` as required,
   parseable artifacts** (absence, emptiness or malformed JSON fails the collection);
   `variables.json` stays optional (a build class may legitimately not produce it).
@@ -53,12 +55,14 @@ CheriBSD lanes, cheri_riscv64 and aarch64-morello. The benchmark itself lives in
 Makefile                    the dispatcher — `make ARCH=<lane> <target>`
 env.sh                      every pin, URL, timeout and root — the single source of truth
 scripts/
-  common/                   shared machinery: derive_registry.py, build_corpus.sh,
-                            compare_lanes.py, shim.sh, version_stamp.sh
+  common/                   shared machinery: stage_corpus.sh (the one corpus staging
+                            path), corpus_manifest.py, compare_lanes.py, shim.sh,
+                            version_stamp.sh
   aarch64/                  prepare.sh / run.sh — the binfmt lane (+ pa/bti/mte variants)
   riscv64/                  kernel + busybox + rootfs image builders; run.sh
-  riscv64_nemu/             prepare.sh / run.sh — the NEMU-venue lane; drives
-                            benchmark/platform/riscv64-nemu-linux/ read-only
+  riscv64_nemu/             prepare.sh / run.sh — the NEMU-venue lane around the absorbed
+                            venue package venue/ (image builder, boot driver, guest
+                            overlay)
   cheri/                    source staging, toolchain/emulator/image builds,
                             console driver, dialect probe
   cheri_riscv64/  morello/  prepare.sh / run.sh for the two CheriBSD lanes
@@ -86,22 +90,23 @@ make ARCH=<lane> [enable_aarch64_<pa|bti|mte>=yes] <deploy|run|clean|dump>
   `CHERI_BUILD_TIMEOUT` (a cold CHERI deploy is a world build — hours).
 - `deploy` re-checks its pinned items and fails fast when one is missing.
 - `dump` delegates to the bench's own dump target; the riscv64, riscv64-nemu and both
-  CHERI lanes refuse by design — the riscv64/CHERI binaries live inside the guest image,
-  and the riscv64-nemu corpus is staged corpus-keyed, so there are no in-tree
-  `test/<program>` builds to disassemble.
+  CHERI lanes refuse by design — every system lane's corpus is staged corpus-keyed
+  (the riscv64 and CHERI binaries live inside their guest images), so there are no
+  in-tree `test/<program>` builds to disassemble.
 
 ## Architecture
 
 - The Makefile reads the few `env.sh` values its recipes need and dispatches to
-  `scripts/<lane>/` (the x86_64 lane is implemented inline in the Makefile). The system
-  lanes' deploy derives the lane's registry (`scripts/common/derive_registry.py` —
-  per-lane skips and expected failures are declared at deploy time, never hard-coded)
-  and stages the corpus (`scripts/common/build_corpus.sh`, which also writes
-  `manifest.json`); the host lanes build only their scheduler and compile the corpus on
-  demand during the run. The riscv64-nemu lane is the exception: its deploy drives the
-  bench's own platform scripts, which derive their runset registry and stage the corpus
-  themselves — `derive_registry.py` is not in that path, and the lane's completeness gate
-  compares against the deployed runset's registry instead.
+  `scripts/<lane>/` (the x86_64 lane is implemented inline in the Makefile). Every
+  system lane's deploy stages the corpus through one orchestrator
+  (`scripts/common/stage_corpus.sh`), which drives the pinned bench runner's corpus
+  mode — the runner owns keying and skip handling, and the staged tree carries the
+  bench's tracked `configure.json` verbatim; `scripts/common/corpus_manifest.py`
+  verifies the staged set against the tracked registry and writes `manifest.json`.
+  The host lanes build only their scheduler and compile the corpus on demand during
+  the run. The riscv64-nemu lane stages through the same orchestrator and boots the
+  image the absorbed venue package (`scripts/riscv64_nemu/venue/`) assembled; its
+  completeness gate compares against the staged verbatim registry.
 - The aarch64 lanes execute the host-built corpus through the kernel's binfmt handler
   under qemu-aarch64; `scripts/common/shim.sh` puts the lane-appropriate tool shim
   (notably the objdump the bench's opcode extraction calls) first on `PATH`.

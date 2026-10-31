@@ -13,8 +13,9 @@ set -euo pipefail
 # The guest boots from the disk through UEFI - the edk2-aarch64-code.fd
 # firmware the pinned QEMU ships - and reaches its kernel through loader(8);
 # Morello takes no direct kernel entry (unlike the riscv64 lane).  The guest
-# scheduler runs `run-test no-make exhausted-run` (the corpus is prebuilt
-# host-side; the guest must never make), writes results.json into the writable
+# scheduler runs `run-test no-make corpus exhausted-run` (the corpus is
+# prebuilt and corpus-keyed host-side; the guest must never make), writes
+# results.json into the writable
 # dir, and the runner copies results out and writes guest-status.txt on the
 # results-out share - the same handshake contract as the riscv64 lane.  The
 # host never parses console output.
