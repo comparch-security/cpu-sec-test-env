@@ -14,9 +14,16 @@
 #   - RISC-V userspace vector: the apt cross glibc's RVA23U64 code (static
 #     busybox's memcpy included) executes vector instructions, and the second
 #     symbol is load-bearing - it is what makes riscv_v_default_allow default
-#     to allow (glibc never issues the V prctl itself).
+#     to allow (glibc never issues the V prctl itself);
+#   - RISC-V user-mode CFI (Zicfilp/Zicfiss): first kernel symbol line 7.0,
+#     and the symbol's Kconfig gate is a cc-option probe only the GCC 16
+#     toolchain pin passes - build_kernel.sh probes it and asserts the symbol
+#     against the built .config.  The symbol arms nothing by itself: user-CFI
+#     arming is gated on the platform's ISA advertisement (the CFI variant's
+#     CPU model / venue DT; the plain lanes advertise nothing).
 CONFIG_RISCV_ISA_V=y
 CONFIG_RISCV_ISA_V_DEFAULT_ENABLE=y
+CONFIG_RISCV_USER_CFI=y
 CONFIG_SERIAL_8250=y
 CONFIG_SERIAL_8250_CONSOLE=y
 CONFIG_DEVTMPFS=y

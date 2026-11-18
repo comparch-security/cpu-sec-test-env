@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="last-modified" content="2026-10-31">
+    <meta name="last-modified" content="2026-11-19">
     <title>Architecture | cpu-sec-test-env</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -59,8 +59,10 @@
         <h2>Pins</h2>
 
         <p>
-            All pins live in <code>env.sh</code>: the bench commit, the toolchains,
-            qemu, the guest kernel and busybox, the NEMU checkout and commit,
+            All pins live in <code>env.sh</code>: the bench commit, the toolchains
+            (the apt gcc-13 crosses and the GCC 16.1.0 riscv64 prefix), qemu, the
+            guest kernel and busybox, the OpenSBI firmware, the NEMU checkout and
+            commit plus the CFI-verified NEMU checkout and its binary sha256,
             cheribuild and the CHERI images,
             the roots and the timeouts. The Makefile and the lane scripts read
             them; nothing else hard-codes them. The Makefile refuses to run with an
@@ -100,6 +102,29 @@
             boots the image the absorbed venue package
             (<code>scripts/riscv64_nemu/venue/</code>) assembled; its completeness
             gate compares the run's record set against the staged verbatim registry.
+        </p>
+        <p>
+            The build-class flags ride the same path. <code>--enable-flag</code> is
+            accepted only as <code>enable_aarch64_morello</code> (for
+            <code>aarch64-morello</code>) or <code>enable_riscv64_cfi</code> (for
+            <code>riscv64-cfi</code> and <code>riscv64-nemu-cfi</code>), and an
+            empty value is a usage error. The flag is exported into the corpus
+            invocation's <em>environment</em>, because the runner's child makes take
+            no command-line flags; the staging script's own two host-side makes
+            therefore drop it by name (<code>env -u MAKEFLAGS -u MFLAGS -u ARCH -u
+            enable_riscv64_cfi</code>), or the bench Makefile's guard would kill
+            them. The two CFI variants then select the GCC 16 toolchain, a
+            lane-keyed corpus tree, and — at run time — a CFI-advertising platform.
+        </p>
+        <p>
+            The same discipline governs every lane's cleanup: the venue builds its
+            guest scheduler inside the tracked submodule, so a variant recipe's
+            inherited <code>ARCH</code>/class flag would make the bench guard kill
+            a plain <code>make -C benchmark clean</code>. All three cleanup sites
+            clear the parent make's variables, treat a non-zero clean as a lane
+            failure, and assert <code>benchmark/run-test</code> is absent — a
+            gitignored RISC-V runner left behind would be executed by the next host
+            lane through <code>binfmt_misc</code>.
         </p>
 
         <h2>The opcode-extraction shim</h2>

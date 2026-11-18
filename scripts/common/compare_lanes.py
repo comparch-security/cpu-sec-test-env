@@ -55,7 +55,14 @@ LANES = (
     "riscv64", "riscv64-nemu",
 )
 CHERI_LANES = ("cheri_riscv64", "aarch64-morello")
-KNOWN_LANES = LANES + CHERI_LANES
+# The armed riscv64 variants.  Deliberately NOT in the default LANES tuple: an
+# armed lane's codes differ from the plain lanes' BY DESIGN (declared 30
+# deliveries, plus the R5 residue the registry does not declare yet), so a
+# default gate would fold a CFI observation into the pin-uniform pass/fail.
+# A variant's presence is an explicit --lanes argument (the CFI cycle's gate
+# names all nine); --stamp/--allow-absent parsing still accepts the names.
+CFI_VARIANT_LANES = ("riscv64-cfi", "riscv64-nemu-cfi")
+KNOWN_LANES = LANES + CHERI_LANES + CFI_VARIANT_LANES
 
 BENIGN = {"clean", "declared", "not-run-skipped", "class-masked"}
 GATE_FAILING = {

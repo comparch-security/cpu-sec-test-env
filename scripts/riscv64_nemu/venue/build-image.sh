@@ -22,16 +22,33 @@
 # and busybox tarballs.  They may be seeded from $BUILD_DIR/downloads before
 # any download.
 #
-# Kernel 6.18.56, not the plan's original 6.1.83: the guest userspace is built
-# by the apt cross toolchain whose glibc is RVA23U64 vector-using code, and
-# kernel-side userspace vector support only exists from Linux 6.5
-# (arch/riscv/kernel/vector.c, CONFIG_RISCV_ISA_V).  On 6.1.83 every guest
-# process dies with SIGILL on its first vector instruction -- measured
-# 2026-10-20: the static busybox dies in a glibc memset `vsetivli` at init, and
-# a *dynamic* probe built with the same cross g++-13 dies even earlier, inside
-# ld-linux itself.  The env repo's riscv64 lane pins this same kernel for this
-# same reason; they are pinned into the config here and asserted against the
-# built .config.
+# Kernel 7.3.4 (the 7.x line is the first with CONFIG_RISCV_USER_CFI, which
+# the armed guests' Zicfiss self-arm needs at boot).  Arming is gated on the
+# PLATFORM's ISA advertisement, not on the binary: the kernel writes the U-mode
+# ssp CSR at the first return to userspace only when the guest DT advertises
+# zicfiss (measured 2026-11-17: an advertising DT plus the plain pinned
+# interpreter - NEMU master, no ssp CSR - panics at boot), which is why the
+# advertisement below is scoped to the CFI variant lane.  The kernel is built
+# by the GCC 16 toolchain pin: the
+# symbol's Kconfig gate is a cc-option probe that gcc-13 fails, after which the
+# symbol silently vanishes.  The 6.x rationale below still holds and is why
+# the vector pair stays pinned: the guest userspace is built by the apt cross
+# toolchain whose glibc is RVA23U64 vector-using code, and kernel-side
+# userspace vector support only exists from Linux 6.5 (arch/riscv/kernel/
+# vector.c, CONFIG_RISCV_ISA_V).  On 6.1.83 every guest process dies with
+# SIGILL on its first vector instruction -- measured 2026-10-20: the static
+# busybox dies in a glibc memset `vsetivli` at init, and a *dynamic* probe
+# built with the same cross g++-13 dies even earlier, inside ld-linux itself.
+# The env repo's riscv64 lane pins this same kernel for this same reason; they
+# are pinned into the config here and asserted against the built .config.
+#
+# The guest device tree advertises Zicfilp/Zicfiss for the CFI VARIANT lane
+# only (ENABLE_FLAG=enable_riscv64_cfi; the venue interposes on dtc, see
+# venue/dtc-cfi.sh): OpenSBI v1.9 gates its FWFT SHADOW_STACK advertisement on
+# the DT hart features and the kernel's user-CFI probe reads the same node, so
+# without it both are blind to CFI.  The plain lane compiles an
+# advertisement-free DT and asserts the NEGATIVE - with the advertisement its
+# pinned interpreter (no ssp CSR) panics at the first userspace return.
 
 set -euo pipefail
 
@@ -68,13 +85,24 @@ SEED_DIRS=(
 )
 
 # cross toolchain (the bench Makefile's child makes receive these through the
-# environment; only this script's own cross builds pass them explicitly)
-CXX="$RISCV64_CXX"
-CC="$RISCV64_CC"
-ASM="$RISCV64_AS"
-OBJDUMP="$RISCV64_OBJDUMP"
-CROSS_COMPILE="${RISCV64_OBJDUMP%-objdump}-"
-READELF="${CROSS_COMPILE}readelf"
+# environment; only this script's own cross builds pass them explicitly).
+# The lane prepare script exports the lane's effective knobs - gcc-13 for the
+# plain lane, the GCC 16 pin for the CFI variant (its corpus and its guest
+# closure must share one sysroot) - and those win here; a direct invocation
+# without them falls back to the env.sh pins.
+CXX="${CXX:-$RISCV64_CXX}"
+CC="${CC:-$RISCV64_CC}"
+ASM="${ASM:-$RISCV64_AS}"
+OBJDUMP="${OBJDUMP:-$RISCV64_OBJDUMP}"
+CROSS_COMPILE="${CROSS_COMPILE:-${OBJDUMP%-objdump}-}"
+READELF="${READELF:-${CROSS_COMPILE}readelf}"
+# The guest KERNEL leg builds with the GCC 16 toolchain pin (CONFIG_RISCV_USER_CFI
+# needs it); busybox, gcpt and OpenSBI ride the knobs above.
+case "$RISCV64_GNU_PREFIX" in /*) ;; *) RISCV64_GNU_PREFIX="$ROOT/$RISCV64_GNU_PREFIX" ;; esac
+[ -x "${RISCV64_GNU_PREFIX}gcc" ] ||
+    die "kernel CC not found: ${RISCV64_GNU_PREFIX}gcc (RISCV64_GNU_PREFIX=$RISCV64_GNU_PREFIX; the GCC 16 toolchain pin) - install it or override RISCV64_GNU_PREFIX"
+KERNEL_CROSS="$RISCV64_GNU_PREFIX"
+KERNEL_CC="${RISCV64_GNU_PREFIX}gcc"
 # NEMU_DIR/NEMU_BIN are one overridable pair; a relative value resolves
 # against the repository root (env.sh keeps its default relative on purpose).
 case "$NEMU_BIN" in /*) ;; *) NEMU_BIN="$ROOT/$NEMU_BIN" ;; esac
@@ -84,6 +112,16 @@ export SOURCE_DATE_EPOCH
 # staging step succeeded, so a half-staged tree can never be consumed.
 [ -f "$CORPUS/manifest.json" ] || die "$CORPUS/manifest.json missing; stage_corpus.sh did not complete for this lane"
 [ -d "$CORPUS/test" ] || die "$CORPUS/test missing; stage_corpus.sh did not complete for this lane"
+
+# The DT ISA advertisement is scoped to the CFI variant lane (see the header):
+# prepare.sh has already matched ENABLE_FLAG against the lane name, so this is
+# the venue-side reading of the same switch - an unknown value means the lane
+# wiring changed without this script.
+case "${ENABLE_FLAG:-}" in
+    "")                 CFI_VARIANT=0 ;;
+    enable_riscv64_cfi) CFI_VARIANT=1 ;;
+    *) die "ENABLE_FLAG='${ENABLE_FLAG}' is not a riscv64-nemu lane flag ('' or enable_riscv64_cfi)" ;;
+esac
 
 # The packing step below requires GNU cpio's --reproducible; probe it here,
 # before any fetch or build, so a host without it fails with a diagnostic
@@ -189,15 +227,18 @@ if [ ! -f "$OUT/kernel/Image-$KERNEL_VER" ]; then
         > "$OUT/linux-$KERNEL_VER/.config"
     # userspace vector, the load-bearing pair (see the header): RISCV_ISA_V is
     # the kernel-side vector support, RISCV_ISA_V_DEFAULT_ENABLE makes
-    # riscv_v_default_allow default to allow -- glibc never issues the V prctl
-    printf 'CONFIG_RISCV_ISA_V=y\nCONFIG_RISCV_ISA_V_DEFAULT_ENABLE=y\n' \
+    # riscv_v_default_allow default to allow -- glibc never issues the V prctl.
+    # CONFIG_RISCV_USER_CFI enables user-mode CFI; it arms per thread only when
+    # the guest DT advertises zicfiss (that advertisement is scoped to the CFI
+    # variant above).  Its Kconfig gate needs the GCC 16 kernel CC below.
+    printf 'CONFIG_RISCV_ISA_V=y\nCONFIG_RISCV_ISA_V_DEFAULT_ENABLE=y\nCONFIG_RISCV_USER_CFI=y\n' \
         >> "$OUT/linux-$KERNEL_VER/.config"
-    # CC= pins the same versioned gcc-13 as the corpus (see the busybox note)
-    make -C "$OUT/linux-$KERNEL_VER" ARCH=riscv CROSS_COMPILE="$CROSS_COMPILE" CC="$CC" olddefconfig >/dev/null
-    make -C "$OUT/linux-$KERNEL_VER" ARCH=riscv CROSS_COMPILE="$CROSS_COMPILE" CC="$CC" -j"$JOBS" WERROR=0 Image
-    for sym in CONFIG_RISCV_ISA_V CONFIG_RISCV_ISA_V_DEFAULT_ENABLE; do
+    # CC= is the GCC 16 pin for this leg only (see the toolchain pin above)
+    make -C "$OUT/linux-$KERNEL_VER" ARCH=riscv CROSS_COMPILE="$KERNEL_CROSS" CC="$KERNEL_CC" olddefconfig >/dev/null
+    make -C "$OUT/linux-$KERNEL_VER" ARCH=riscv CROSS_COMPILE="$KERNEL_CROSS" CC="$KERNEL_CC" -j"$JOBS" WERROR=0 Image
+    for sym in CONFIG_RISCV_ISA_V CONFIG_RISCV_ISA_V_DEFAULT_ENABLE CONFIG_RISCV_USER_CFI; do
         grep -qx "$sym=y" "$OUT/linux-$KERNEL_VER/.config" \
-            || die "built .config lacks $sym=y; guest userspace vector would SIGILL"
+            || die "built .config lacks $sym=y; guest userspace vector would SIGILL (CONFIG_RISCV_USER_CFI in particular needs the GCC 16 kernel CC pin RISCV64_GNU_PREFIX=$RISCV64_GNU_PREFIX - a toolchain without -fcf-protection support silently drops the symbol)"
     done
     cp "$OUT/linux-$KERNEL_VER/arch/riscv/boot/Image" "$OUT/kernel/Image-$KERNEL_VER"
 fi
@@ -219,7 +260,7 @@ is_riscv_elf "$OUT/gcpt/build/gcpt" || die "gcpt (the ELF) is not a riscv64 ELF"
 [ -s "$OUT/gcpt/build/gcpt.bin" ] || die "gcpt.bin is empty"
 
 echo "== [5/8] stage the guest bench tree (cross scheduler, libcfi, corpus)"
-rm -rf "$DEST/bench" "$DEST/lib"   # no stale staging from an earlier deploy may survive
+rm -rf "$DEST/bench" "$DEST/lib" "$DEST/lib64"   # no stale staging from an earlier deploy may survive
 rm -f "$DEST/manifest.json"        # and a stale manifest must not satisfy a consumer's guard
 mkdir -p "$DEST/bench/test" "$DEST/bench/lib/common" "$DEST/lib"
 # Cross-built guest scheduler: `-B` because GNU make does not rebuild on
@@ -253,40 +294,97 @@ echo "== [6/8] runtime libraries (NEEDED + PT_INTERP closure)"
 # through the cross compiler's own search path.  libcfi.so is NOT staged to
 # /lib: the cpi/cfi binaries reach it through their relative RUNPATH
 # (lib/common/) with the guest's cwd at /bench.
+#
+# Placement follows the staged loader's own compiled-in search dirs (measured
+# 2026-11-18): the GCC 16 loader looks in /lib64/lp64d/ and /usr/lib64/lp64d/
+# only, the apt gcc-13 loader in /lib/ and /usr/lib/ (+ the riscv64-linux-gnu
+# multiarch dirs).  The closure goes into CLOSURE_DIR; the loader itself stays
+# at its PT_INTERP path - the kernel opens that absolute path at execve.
 is_elf() { [ "$(head -c4 "$1" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]; }
+if [ "$CFI_VARIANT" -eq 1 ]; then
+    CLOSURE_DIR="$DEST/lib64/lp64d"
+    CLOSURE_REL=/lib64/lp64d
+    LOADER_SEARCH="/lib64/lp64d /usr/lib64/lp64d"
+else
+    CLOSURE_DIR="$DEST/lib"
+    CLOSURE_REL=/lib
+    LOADER_SEARCH="/lib /usr/lib"
+fi
+mkdir -p "$CLOSURE_DIR"
 declare -a queue=()
 queue+=("$DEST/bench/run-test")
 for f in "$DEST/bench/test/"*; do queue+=("$f"); done
 [ -f "$DEST/bench/lib/common/libcfi.so" ] && queue+=("$DEST/bench/lib/common/libcfi.so")
 declare -A staged_seen=()
+declare -A interp_paths=()
 while [ "${#queue[@]}" -gt 0 ]; do
     f="${queue[0]}"; queue=("${queue[@]:1}")
     [ -n "${staged_seen[$f]:-}" ] && continue
     staged_seen[$f]=1
     is_elf "$f" || continue
     interp="$("$READELF" -l "$f" | sed -n 's/.*Requesting program interpreter: \(.*\)\]/\1/p')"
+    [ -z "$interp" ] || interp_paths["$(basename "$interp")"]="$interp"
     for soname in $interp $("$OBJDUMP" -p "$f" | awk '$1=="NEEDED"{print $2}'); do
         base="$(basename "$soname")"
-        [ -e "$DEST/lib/$base" ] && continue
+        if [ -n "$interp" ] && [ "$soname" = "$interp" ]; then
+            dest="$DEST$soname"                             # PT_INTERP: an absolute guest path
+        else
+            dest="$CLOSURE_DIR/$base"
+        fi
+        [ -e "$dest" ] && continue
         [ -e "$DEST/bench/lib/common/$base" ] && continue   # relative-RUNPATH library
         src="$("$CXX" -print-file-name="$base")"
         if [ ! -f "$src" ]; then
             die "unresolved library $base (needed by $f)"
         fi
-        cp -pL "$src" "$DEST/lib/$base"
-        queue+=("$DEST/lib/$base")
+        cp -pL "$src" "$dest"
+        queue+=("$dest")
     done
 done
-echo "   staged libs: $(ls "$DEST/lib" | tr '\n' ' ')"
+# Every staged ELF's NEEDED must live in a directory the staged loader actually
+# searches (or at its relative-RUNPATH home): resolving the right files is not
+# enough, a closure staged elsewhere is invisible at the first exec.  The one
+# exemption is the ELF interpreter's own soname: the loader is staged at its
+# PT_INTERP path, the kernel opens that absolute path at execve and the loader
+# resolves its own soname from its link map, so it is never searched - but
+# libc.so.6 still lists it as an ordinary NEEDED.
+assert_closure_reachable() {  # elf...
+    local elf dep d found ipath
+    for elf in "$@"; do
+        is_elf "$elf" || continue
+        while IFS= read -r dep; do
+            [ -n "$dep" ] || continue
+            found=0
+            for d in $LOADER_SEARCH; do
+                [ -f "$DEST$d/$dep" ] && { found=1; break; }
+            done
+            if [ "$found" -eq 0 ]; then
+                ipath="${interp_paths[$dep]:-}"
+                if [ -n "$ipath" ] && [ -f "$DEST$ipath" ]; then found=1; fi
+            fi
+            if [ "$found" -eq 0 ] && [ ! -f "$DEST/bench/lib/common/$dep" ]; then
+                die "$elf: NEEDED $dep is not staged in any directory the staged loader searches ($LOADER_SEARCH) - stage the closure into one of them"
+            fi
+        done < <("$READELF" -d "$elf" | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p')
+    done
+}
+closure_check=("$DEST/bench/run-test" "$DEST/bench/lib/common/libcfi.so")
+for f in "$DEST/bench/test/"*; do closure_check+=("$f"); done
+while IFS= read -r -d '' f; do closure_check+=("$f"); done \
+    < <(find "$DEST/lib" "$CLOSURE_DIR" -maxdepth 1 -type f -print0 | sort -zu)
+assert_closure_reachable "${closure_check[@]}"
+echo "   staged libs ($CLOSURE_REL): $(find "$DEST/lib" "$CLOSURE_DIR" -maxdepth 1 -type f -printf '%f\n' | sort -u | tr '\n' ' ')"
 
 echo "== [7/8] rootfs tree and cpio"
 rm -rf "$OUT/rootfs"
 mkdir -p "$OUT/rootfs"/{bench,lib,etc,proc,sys,tmp,dev}
+mkdir -p "$OUT/rootfs$CLOSURE_REL"
 cp -a "$OUT/busybox-$BUSYBOX_VER/_install/." "$OUT/rootfs/"
 ln -sf bin/busybox "$OUT/rootfs/init"
 install -m 0644 "$ROOT/scripts/riscv64_nemu/venue/guest/inittab" "$OUT/rootfs/etc/inittab"
 cp -a "$DEST/bench/." "$OUT/rootfs/bench/"
 cp -a "$DEST/lib/." "$OUT/rootfs/lib/"
+[ "$CLOSURE_REL" = /lib ] || cp -a "$DEST$CLOSURE_REL/." "$OUT/rootfs$CLOSURE_REL/"
 "$CC" -O2 -static -o "$OUT/rootfs/bench/nemu-trap" "$ROOT/scripts/riscv64_nemu/venue/guest/nemu-trap.c"
 install -m 0755 "$ROOT/scripts/riscv64_nemu/venue/guest/bench.sh" "$OUT/rootfs/bench/bench.sh"
 is_riscv_elf "$OUT/rootfs/bench/nemu-trap" || die "nemu-trap is not a riscv64 ELF"
@@ -337,10 +435,49 @@ if size < need:
     print("   initramfs will land at 0x%x, kernel _end at 0x%x)" % (begin + need, begin + footprint))
 PY
 
-CROSS_COMPILE="$CROSS_COMPILE" DTC=dtc DEFAULT_DTB=xiangshan \
+# The guest DT advertisement is a precondition of arming (see dtc-cfi.sh):
+# workload-builder regenerates the DTS template inside build-firmware-linux.sh,
+# so the patch point is the builder's own DTC env hook.  The interposer is
+# INSTALLED into the image build tree with an explicit mode - build-firmware
+# execs "$DTC" directly, and this repository tracks its scripts without the
+# executable bit.  Only the CFI variant interposes; the plain lane hands the
+# real dtc, so its DT carries no advertisement (the assertion below pins that).
+if [ "$CFI_VARIANT" -eq 1 ]; then
+    DTC_TOOL="$OUT/dtc-cfi.sh"
+    install -m 0755 "$ROOT/scripts/riscv64_nemu/venue/dtc-cfi.sh" "$DTC_TOOL"
+else
+    DTC_TOOL=$(command -v dtc) || die "dtc not found on PATH"
+fi
+
+CROSS_COMPILE="$CROSS_COMPILE" DTC="$DTC_TOOL" \
+    DEFAULT_DTB=xiangshan \
     FIRMWARE_OUTPUT="$DEST/fw_payload.bin" \
     bash "$WB/scripts/build-firmware-linux.sh" \
         "$OUT/gcpt/build/gcpt.bin" "$OUT/opensbi" "$OUT/generated-dts" "$OUT/kernel/Image" "$DEST"
+
+# The DT advertisement is a precondition of arming, so the CFI variant asserts
+# it on the COMPILED tree the firmware embeds - never on the template that was
+# handed in (workload-builder regenerates the template, and the interposer
+# patches what dtc actually compiles).  The plain lane asserts the opposite:
+# its pinned interpreter has no ssp CSR, and an advertising DT makes the 7.3.4
+# kernel write it at the first userspace return - a measured boot panic.
+DTB="$OUT/dt/xiangshan.dtb"
+[ -f "$DTB" ] || die "the firmware build produced no $DTB"
+dtb_dts=$(dtc -I dtb -O dts "$DTB" 2>/dev/null) ||
+    die "cannot decompile $DTB to verify the guest DT's ISA advertisement"
+for ext in zicfiss zicfilp; do
+    if [ "$CFI_VARIANT" -eq 1 ]; then
+        case "$dtb_dts" in
+            *"$ext"*) ;;
+            *) die "the compiled guest DTB $DTB advertises no $ext - the venue's dtc interposer (venue/dtc-cfi.sh) did not run or the DTS carries no riscv,isa-extensions; without the advertisement OpenSBI and the kernel are blind to CFI and every armed record would exit 20" ;;
+        esac
+    else
+        case "$dtb_dts" in
+            *"$ext"*) die "the compiled guest DTB $DTB advertises $ext on the PLAIN lane - the advertisement is scoped to enable_riscv64_cfi; with it the 7.3.4 kernel writes the ssp CSR at the first userspace return and the pinned interpreter (no such CSR) panics at boot" ;;
+            *) ;;
+        esac
+    fi
+done
 
 python3 - "$DEST" "$NEMU_BIN" "$ROOT/benchmark" "$CXX" \
     "$WB_COMMIT" "$OPENSBI_COMMIT" "$LCA_COMMIT" \

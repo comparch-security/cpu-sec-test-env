@@ -6,7 +6,24 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-# cbe3bf9 makes the benchmark a portable core: the embedded venue
+# 182652b is bench cycle 3's class-gap commit, completing the stack-offset
+# calibration: 216da4ee had tried to capture the call's return site from `ra`
+# after the call, but the helper has already scanned by then and the value was
+# dead -- the armed class still matched nothing and exited 2 on the NEMU lane.
+# 182652b anchors a link-time symbol in the instruction slot the call returns
+# to (`lpad 0` plus the 4-byte label alignment makes the label itself the wrong
+# address), so the helper receives the true return site.  216da4ee also declares
+# code 262 on the two large-count data rows (the allocator aborts).  Its
+# parent 2aaf895 fixed the self-arm lock argument: the arm blob passed
+# a1 = -1 (a status-bit mask) to PR_LOCK_SHADOW_STACK_STATUS, but the RISC-V
+# lock interface requires argument 0 and returns -EINVAL otherwise, so every
+# record on an armed lane exited 20 at startup before running any test body;
+# the lock step now passes 0 and the mask comment states the RISC-V
+# all-or-nothing truth.  Its parent d9cc4cd is bench cycle 2 (self-arm): every
+# corpus binary of the enable_riscv64_cfi class arms Zicfiss at startup
+# (-DCSB_CFI_SELF_ARM), the SIGSEGV/SEGV_CPERR delivery path reports 30
+# (backward) / 31 (forward), and the tracked registry carries the 19 CFI rows.
+# Beneath it cbe3bf9 made the benchmark a portable core: the embedded venue
 # (platform/riscv64-nemu-linux) is gone - this repository stages every system
 # lane's corpus itself, in a scratch tree, and carries the NEMU venue package -
 # and the CHERI/Morello build skips are declared in the tracked registry, where
@@ -18,7 +35,16 @@
 # (f4c916a), the scheduler's corpus mode (a09f570) and the opcode-extraction
 # fix (74195c4).  The tracked registry is never swapped, so the submodule stays
 # clean through a deploy and any dirt in it is a real edit.
-BENCH_COMMIT=cbe3bf9b67c8ca8b8eca9567ad3d09ca10dade1a
+BENCH_COMMIT=182652b7efaadca7900beb3ce2a74ec3282e2565
+
+# Every lane run's preflight: `git -C benchmark status --short` must be empty
+# (the deploy legs, the run legs and each lane's post-clean assert all read
+# it).  Dirt there is a real edit to the submodule, never staging residue -
+# the corpus is built in a scratch tree.  Measured 2026-11-17: nine foreign
+# untracked entries in the submodule root (.bash_profile .bashrc .gitconfig
+# .mcp.json .profile .ripgreprc .zprofile .zshrc .gitmodules) blocked every
+# lane until they were moved out of the tree; they are the user's files, not
+# workflow artifacts, so no lane script removes them.
 
 # ---- NEMU venue pins (the riscv64-nemu lane) ----
 # NEMU_DIR/NEMU_BIN are a pair, overridden TOGETHER: NEMU_DIR defaults to the
@@ -39,10 +65,29 @@ NEMU_COMMIT=ae1ec3cd869b9c5e1783af691538d5c26f37ee55
 # tarballs are the KERNEL_* / BUSYBOX_* pins below - one pin per input, here.
 NEMU_WB_COMMIT=b7c321dec6ad6f4c78abcaefc722b59b4043503c
 NEMU_WB_URL=https://github.com/OpenXiangShan/workload-builder
+# v1.9.  One pin per input: this commit feeds BOTH the NEMU venue's firmware
+# (venue/build-image.sh) and the qemu lane's fw_jump build
+# (scripts/riscv64/build_sbi.sh) - it is the OpenSBI that advertises the SBI
+# FWFT LANDING_PAD + SHADOW_STACK features user-mode CFI needs, which QEMU's
+# bundled firmware does not.
 NEMU_OPENSBI_COMMIT=cbf9f6734dd85a982c63e3cb5db7ffe09da839ca
 NEMU_OPENSBI_URL=https://github.com/riscv-software-src/opensbi
 NEMU_LCA_COMMIT=5169da768d18f4682a489eaabe7c071df6d6ef88
 NEMU_LCA_URL=https://github.com/openxiangshan/LibCheckpointAlpha
+
+# ---- CFI variant NEMU pins (the riscv64-nemu-cfi lane only) ----
+# The workspace's CFI-verified checkout: NEMU master pinned at ae1ec3cd plus
+# PR #1211 (branch cfi-merge), validated corner-for-corner by the four CFI
+# cycles.  Overridable as one pair like NEMU_DIR/NEMU_BIN, and resolved
+# against the repository root by the lane scripts.  The binary's sha256 is a
+# hard pin here (unlike the plain lane's run-to-run record): an interpreter
+# that is not the CFI-verified build must not publish an armed stamp, and a
+# HEAD check alone says nothing about the binary.  The plain riscv64-nemu
+# lane's NEMU_* trio above is untouched.
+: "${NEMU_CFI_DIR:=../NEMU-cfi}"
+: "${NEMU_CFI_BIN:=$NEMU_CFI_DIR/build/riscv64-nemu-interpreter}"
+NEMU_CFI_COMMIT=668eb688a7478fa8863220d8f81033ed786f6bb9
+NEMU_CFI_BIN_SHA256=87091a763f1341b55cdaa7dfadc58efb97489d0d7f64092702ade5af6f747492
 
 # ---- cross toolchains (Ubuntu gcc-13 cross packages) ----
 RISCV64_CXX=riscv64-linux-gnu-g++-13
@@ -54,6 +99,18 @@ AARCH64_CC=aarch64-linux-gnu-gcc-13
 AARCH64_AS=aarch64-linux-gnu-as
 AARCH64_OBJDUMP=aarch64-linux-gnu-objdump
 AARCH64_SYSROOT=/usr/aarch64-linux-gnu
+
+# ---- GCC 16.1.0 riscv64 toolchain (the kernel CC and the CFI variants) ----
+# Installed by the workspace's riscv-gnu-toolchain build; the prefix ENDS in
+# `-` (append `gcc`/`g++`/`as`/`objdump` directly, never another dash).  Like
+# NEMU_DIR/NEMU_BIN it defaults to a REPO-RELATIVE sibling and is resolved
+# against the repository root by its consumers (a pre-set absolute value
+# wins).  Load-bearing for exactly two things: the guest kernel CC (the
+# CONFIG_RISCV_USER_CFI Kconfig gate is a cc-option probe that gcc-13 fails,
+# so the symbol silently vanishes) and the CFI variant corpus toolchain
+# (gcc-13 emits no lpad/sspush).  The RISCV64_CXX/CC/AS/OBJDUMP pins above
+# stay the lane default: busybox and the plain lanes' corpus do not move.
+: "${RISCV64_GNU_PREFIX:=../riscv/bin/riscv64-unknown-linux-gnu-}"
 
 # ---- qemu pins ----
 # The emulator-version pin is deliberately NOT called QEMU_VERSION: qemu-user
@@ -73,6 +130,15 @@ QEMU_AARCH64=qemu-aarch64
 # illegal-instruction in the guest's own libc.  rva23u64 is the whitelisted
 # fallback if the guest kernel mishandles an S-mode extension of rva23s64.
 QEMU_CPU_RISCV64=rva23s64
+# The CFI variant's CPU request (lane riscv64-cfi only).  RVA23 does not
+# include the CFI extensions, so the base profile advertises neither; they are
+# opt-in CPU properties, measured 2026-11-17: `-M virt -cpu rva23s64
+# -machine dumpdtb=...` emits a guest DT with zero zicfiss/zicfilp hits, while
+# this property form advertises both (2 hits).  Without the advertisement the
+# kernel and OpenSBI are blind to CFI and every armed record dies at the
+# self-arm blob's fail path (exit 20).  The plain lane's pin above is
+# unchanged.
+QEMU_CPU_RISCV64_CFI=rva23s64,zicfiss=on,zicfilp=on
 # The mte lane's CPU request: "max" is the venue's default model PLUS PAuth,
 # pinned explicitly so the lane's claim is legible.  max is NOT the default:
 # the unset default's HWCAP is byte-identical to QEMU_CPU=max,pauth=off
@@ -105,18 +171,36 @@ QEMU_CPU_AARCH64_PA=max
 # comparison gate exited 1.  prepare.sh additionally smoke-executes an
 # xpaci-bearing build under this request.
 QEMU_CPU_AARCH64_BTI=max
-QEMU_BIOS_RISCV64=default
+# The riscv64 lanes' -bios: a repo-relative path to the fw_jump.bin built from
+# the pinned OpenSBI by scripts/riscv64/build_sbi.sh (run.sh runs with the
+# repo root as cwd, so the relative form is what QEMU receives).  One firmware
+# pin per platform: BOTH riscv64 lanes boot it - a stamp must name the
+# firmware it booted, and QEMU's bundled blobs do not advertise the SBI FWFT
+# features user-mode CFI needs.  The literal keyword `default` (QEMU's own
+# bundled firmware) is still accepted by run.sh's preflight for backward
+# compatibility, but it is not this pin's value.
+QEMU_BIOS_RISCV64=build/riscv64/fw_jump.bin
 QEMU_MACH_RISCV64=virt
 QEMU_MEM_RISCV64=256
 
 # ---- kernel pin (guest kernel for the riscv64 system lane) ----
-# 6.18 LTS: the apt cross glibc is RVA23U64 machine code whose memcpy executes
-# vector instructions, so the guest kernel must support userspace vector
-# (landed in 6.5; 6.1.83 has no CONFIG_RISCV_ISA_V at all) and default it on
-# (the fragment forces RISCV_ISA_V + RISCV_ISA_V_DEFAULT_ENABLE).
-KERNEL_VERSION=6.18.56
-KERNEL_URL=https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.56.tar.xz
-KERNEL_SHA256=4633bbda2ab95eaf2a7af4041236451d6759c72e6946265531af4b3aacefbf89
+# 7.3 LTS line, for CONFIG_RISCV_USER_CFI: user-mode CFI has no kernel symbol
+# at all before 7.0 (6.18.56 carries none), so the CFI lanes cannot arm on it.
+# The 6.18 rationale still holds and is why the vector pair stays pinned: the
+# apt cross glibc is RVA23U64 machine code whose memcpy executes vector
+# instructions, so the guest kernel must support userspace vector (landed in
+# 6.5) and default it on (the fragment forces RISCV_ISA_V +
+# RISCV_ISA_V_DEFAULT_ENABLE).  One lane-agnostic config serves both riscv64
+# lanes and both NEMU lanes.  CONFIG_RISCV_USER_CFI arms nothing by itself:
+# arming is gated on the PLATFORM's ISA advertisement, so the guest DT decides
+# (both qemu lanes: the CPU pin; both NEMU lanes: the venue's dtc interposer).
+# An advertising DT plus an interpreter without the ssp CSR is a boot panic
+# (measured 2026-11-17, plain riscv64-nemu on the NEMU master pin), which is why
+# both advertisements - QEMU_CPU_RISCV64_CFI and the venue interposer - are
+# scoped to the CFI variant lanes.
+KERNEL_VERSION=7.3.4
+KERNEL_URL=https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.4.tar.xz
+KERNEL_SHA256=b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f
 
 # ---- busybox pin (static guest userspace) ----
 BUSYBOX_VERSION=1.36.1
@@ -151,14 +235,15 @@ STAMP_PACKAGES="qemu-system-riscv qemu-user qemu-user-binfmt gcc-13-riscv64-linu
 
 export BENCH_COMMIT
 export NEMU_DIR NEMU_BIN NEMU_COMMIT
+export NEMU_CFI_DIR NEMU_CFI_BIN NEMU_CFI_COMMIT NEMU_CFI_BIN_SHA256
 export NEMU_WB_COMMIT NEMU_WB_URL NEMU_OPENSBI_COMMIT NEMU_OPENSBI_URL
 export NEMU_LCA_COMMIT NEMU_LCA_URL
-export RISCV64_CXX RISCV64_CC RISCV64_AS RISCV64_OBJDUMP
+export RISCV64_CXX RISCV64_CC RISCV64_AS RISCV64_OBJDUMP RISCV64_GNU_PREFIX
 export AARCH64_CXX AARCH64_CC AARCH64_AS AARCH64_OBJDUMP AARCH64_SYSROOT
 # QEMU_PIN_VERSION is deliberately absent: exporting it would be harmless only
 # until qemu-user grew a matching variable, and the version pin is a
 # prepare.sh-only consumer.
-export QEMU_SYSTEM_RISCV64 QEMU_AARCH64 QEMU_CPU_RISCV64
+export QEMU_SYSTEM_RISCV64 QEMU_AARCH64 QEMU_CPU_RISCV64 QEMU_CPU_RISCV64_CFI
 export QEMU_CPU_AARCH64_MTE QEMU_CPU_AARCH64_PA QEMU_CPU_AARCH64_BTI
 export QEMU_BIOS_RISCV64 QEMU_MACH_RISCV64 QEMU_MEM_RISCV64
 export KERNEL_VERSION KERNEL_URL KERNEL_SHA256

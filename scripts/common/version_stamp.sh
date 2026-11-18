@@ -28,7 +28,11 @@ OUT=$2
 run_status=${3:-${RUN_STATUS:-ok}}
 
 case "$LANE" in
-  x86_64|riscv64|riscv64-nemu|cheri_riscv64|aarch64|aarch64-*|aarch64-morello) ;;
+  # Variant lane names are explicit entries, mirroring the aarch64 precedent: a
+  # riscv64-* wildcard would also accept a typo.  A refused stamp exits 2, and
+  # both run wrappers call this under `set +e`, so a missing entry is silent -
+  # compare_lanes.py would then report the lane absent.
+  x86_64|riscv64|riscv64-cfi|riscv64-nemu|riscv64-nemu-cfi|cheri_riscv64|aarch64|aarch64-*|aarch64-morello) ;;
   *)
     echo "usage: $0 LANE OUT_FILE  (LANE must be a known lane name, got '$LANE')" >&2
     exit 2

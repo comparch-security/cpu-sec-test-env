@@ -9,7 +9,16 @@
 # cheri_riscv64 and
 # aarch64-morello (CheriBSD purecap guests booted under the CHERI/Morello
 # qemu, corpus delivered over virtio-9p - real lanes since the CHERI
-# bring-up landed).
+# bring-up landed).  The two riscv64 lanes have ARMED VARIANTS - lane names
+# riscv64-cfi and riscv64-nemu-cfi, selected with enable_riscv64_cfi=yes on
+# the corresponding ARCH: same lane mechanics, the bench's CFI build class
+# (GCC 16 toolchain, -march=rv64gc_zicfilp_zicfiss -fcf-protection=full,
+# Zicfiss self-arm), their own lane-keyed build/ and results/ trees, and the
+# CFI CPU model on the qemu side.
+#
+# Every lane run's preflight: `git -C benchmark status --short` empty (one
+# environment, one pin) - see env.sh's bench-pin block for what counts as a
+# real edit there.
 #
 # All pins, URLs, timeouts and roots live in env.sh - this Makefile only reads
 # the few values its own recipes need.  One lane runs at a time: every entry
@@ -26,6 +35,9 @@ ARCH ?= $(shell arch)
 
 # The CHERI enable flags select the scaffolded CHERI lanes directly.
 ifneq ($(enable_riscv64_cheri),)
+  ifneq ($(enable_riscv64_cfi),)
+$(error enable_riscv64_cfi=yes cannot be combined with enable_riscv64_cheri: the CFI variant arms riscv64 under Linux, the CHERI lane boots CheriBSD)
+  endif
   override ARCH := cheri_riscv64
 endif
 ifneq ($(enable_aarch64_morello),)
@@ -97,6 +109,21 @@ LANE_NAME := aarch64-$(word 1,$(_AARCH64_SET))
 $(error select at most one of enable_aarch64_{pa,bti,mte}=yes (got: $(_AARCH64_SET)))
     endif
   endif
+endif
+
+# riscv64 CFI variant flag: enable_riscv64_cfi=yes selects the ARMED VARIANT
+# of ARCH=riscv64 (lane `riscv64-cfi`) or ARCH=riscv64-nemu (lane
+# `riscv64-nemu-cfi`).  The flag is the bench build-class flag of the same
+# spelling (stage_corpus.sh exports it into the corpus invocation's
+# environment); the lane name is the env-side identifier - the scripts' lane
+# argument, the lane-keyed build/results trees and the stamp's flag line.
+# Any other ARCH is refused: the class builds only riscv64.
+ifneq ($(enable_riscv64_cfi),)
+  ifneq ($(filter $(ARCH),riscv64 riscv64-nemu),$(ARCH))
+$(error enable_riscv64_cfi=yes applies only to ARCH=riscv64 or ARCH=riscv64-nemu (ARCH=$(ARCH)))
+  endif
+  ENABLE_FLAG := enable_riscv64_cfi
+  LANE_NAME := $(ARCH)-cfi
 endif
 
 # The shared lane-lock body (advisory, fail-fast, names the holder).  The lock
@@ -230,21 +257,36 @@ dump:
 
 else ifeq ($(ARCH),riscv64)
 
+# The lane lock is held across the WHOLE deploy recipe: the kernel, firmware
+# and busybox builders write the shared build/riscv64/ inputs the variant
+# lane reads read-only, so they must not interleave with another lane's run.
+# Only build_image.sh consumes the inherited descriptor (LANE_LOCK_INHERITED
+# lets it verify fd 9 is the held lock instead of re-locking a fresh one) and
+# the two builders ignore it.  The firmware leg precedes the kernel build:
+# the image builder stages fw_jump.bin next to Image.
 deploy:
 	@set -e
-	timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/riscv64/build_kernel.sh
-	timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/riscv64/build_busybox.sh
-	timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/riscv64/build_image.sh riscv64
+	$(call acquire_lane_lock,$(LANE_NAME))
+	ENABLE_FLAG=$(ENABLE_FLAG) timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/riscv64/build_sbi.sh
+	ENABLE_FLAG=$(ENABLE_FLAG) timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/riscv64/build_kernel.sh
+	ENABLE_FLAG=$(ENABLE_FLAG) timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/riscv64/build_busybox.sh
+	ENABLE_FLAG=$(ENABLE_FLAG) LANE_LOCK_INHERITED=1 \
+	  timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/riscv64/build_image.sh $(LANE_NAME)
 
 run:
 	@set -e
-	bash scripts/riscv64/run.sh riscv64
+	ENABLE_FLAG=$(ENABLE_FLAG) bash scripts/riscv64/run.sh $(LANE_NAME)
 
+# The variant's tree (build/$(LANE_NAME)) carries its corpus, stage tree,
+# rootfs.cpio and manifest; the shared kernel Image, fw_jump.bin and
+# busybox-root under build/riscv64/ survive a variant clean.  A PLAIN-lane
+# `make ARCH=riscv64 clean` removes build/riscv64 - shared inputs included -
+# so every variant deploy then needs a fresh riscv64 deploy first.
 clean:
 	@set -e
-	$(call acquire_lane_lock,riscv64)
+	$(call acquire_lane_lock,$(LANE_NAME))
 	make -C benchmark clean
-	rm -rf $(BUILD_DIR)/riscv64
+	rm -rf $(BUILD_DIR)/$(LANE_NAME)
 
 dump:
 	@echo "riscv64 dump is unsupported: the binaries live inside the guest image" >&2
@@ -262,17 +304,17 @@ else ifeq ($(ARCH),riscv64-nemu)
 # session), so no outer timeout here.
 deploy:
 	@set -e
-	timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/riscv64_nemu/prepare.sh riscv64-nemu
+	ENABLE_FLAG=$(ENABLE_FLAG) timeout $(LANE_DEPLOY_TIMEOUT) bash scripts/riscv64_nemu/prepare.sh $(LANE_NAME)
 
 run:
 	@set -e
-	LANE_RUN_TIMEOUT='$(LANE_RUN_TIMEOUT)' bash scripts/riscv64_nemu/run.sh riscv64-nemu
+	ENABLE_FLAG=$(ENABLE_FLAG) LANE_RUN_TIMEOUT='$(LANE_RUN_TIMEOUT)' bash scripts/riscv64_nemu/run.sh $(LANE_NAME)
 
 clean:
 	@set -e
-	$(call acquire_lane_lock,riscv64-nemu)
+	$(call acquire_lane_lock,$(LANE_NAME))
 	make -C benchmark clean
-	rm -rf $(BUILD_DIR)/riscv64-nemu
+	rm -rf $(BUILD_DIR)/$(LANE_NAME)
 
 # The corpus is staged host-side under corpus-keyed paths
 # ($OUT/bench/test/<program>__<key>), so the bench's dump target has

@@ -7,9 +7,12 @@ Project-level guidance for Claude Code and its subagents working in this reposit
 The lane dispatcher that builds and runs the cpu-sec-bench security benchmark on every
 supported architecture from one repository: x86_64 (native host processes — the reference
 lane), aarch64 (through the kernel's binfmt handler under qemu-aarch64, with pa/bti/mte
-variants), riscv64 (a Linux guest under qemu-system-riscv64), riscv64-nemu (the absorbed
-in-repo NEMU venue package — the workspace's XiangShan NEMU interpreting a Linux guest),
-and the two CheriBSD lanes, cheri_riscv64 and aarch64-morello. The benchmark itself lives
+variants), riscv64 (a Linux guest under qemu-system-riscv64, on the built OpenSBI
+firmware), riscv64-nemu (the absorbed in-repo NEMU venue package — the workspace's
+XiangShan NEMU interpreting a Linux guest), the two *armed* variants riscv64-cfi and
+riscv64-nemu-cfi (the bench's RISC-V ISA-CFI build class — Zicfiss shadow stacks and
+Zicfilp landing pads — on a CFI-advertising platform), and the two CheriBSD lanes,
+cheri_riscv64 and aarch64-morello. The benchmark itself lives
 in the `benchmark/` submodule, consumed read-only at the commit pinned in `env.sh`.
 
 ## Rules
@@ -59,10 +62,11 @@ scripts/
                             path), corpus_manifest.py, compare_lanes.py, shim.sh,
                             version_stamp.sh
   aarch64/                  prepare.sh / run.sh — the binfmt lane (+ pa/bti/mte variants)
-  riscv64/                  kernel + busybox + rootfs image builders; run.sh
+  riscv64/                  OpenSBI firmware + kernel + busybox + rootfs image builders;
+                            run.sh
   riscv64_nemu/             prepare.sh / run.sh — the NEMU-venue lane around the absorbed
                             venue package venue/ (image builder, boot driver, guest
-                            overlay)
+                            overlay, CFI DTS interposer)
   cheri/                    source staging, toolchain/emulator/image builds,
                             console driver, dialect probe
   cheri_riscv64/  morello/  prepare.sh / run.sh for the two CheriBSD lanes
@@ -77,19 +81,28 @@ tmp/                        machine-local plans/reports/verification (gitignored
 ## Commands
 
 ```bash
-make ARCH=<lane> [enable_aarch64_<pa|bti|mte>=yes] <deploy|run|clean|dump>
+make ARCH=<lane> [enable_aarch64_<pa|bti|mte>=yes] [enable_riscv64_cfi=yes] <deploy|run|clean|dump>
 ```
 
+- `enable_riscv64_cfi=yes` selects the armed variant of a riscv64-family lane
+  (`riscv64` → `riscv64-cfi`, `riscv64-nemu` → `riscv64-nemu-cfi`); it is refused on
+  every other lane and alongside `enable_riscv64_cheri`. The variants build the corpus
+  with the bench's CFI class and the GCC 16 toolchain, and boot a CFI-advertising
+  platform (the qemu CPU pin; the venue's dtc interposer) — the plain lanes keep an
+  advertisement-free platform, because an advertising DT in front of a non-Zicfiss
+  interpreter is a boot panic.
 - `ARCH` defaults to the host architecture. The host lanes' `run` does everything;
-  riscv64, riscv64-nemu and the CHERI lanes are `deploy` first, then `run`.
-- Every lane run carries its own `timeout` (`LANE_RUN_TIMEOUT`); the riscv64-nemu lane is
-  the exception — its run leg carries no outer `timeout` and is bounded by the lane's own
-  watchdog (`LANE_RUN_TIMEOUT + 120 s`) over the platform's inner NEMU timeout
-  (`LANE_RUN_TIMEOUT`). The system lanes'
+  riscv64 (both variants), riscv64-nemu (both variants) and the CHERI lanes are
+  `deploy` first, then `run`.
+- Every lane run carries its own `timeout` (`LANE_RUN_TIMEOUT`); the riscv64-nemu lanes
+  are the exception — their run legs carry no outer `timeout` and are bounded by the
+  lane's own watchdog (`LANE_RUN_TIMEOUT + 120 s`) over the platform's inner NEMU
+  timeout (`LANE_RUN_TIMEOUT`). The system lanes'
   deploy legs carry `LANE_DEPLOY_TIMEOUT`, and the CHERI emulator and image builds carry
   `CHERI_BUILD_TIMEOUT` (a cold CHERI deploy is a world build — hours).
 - `deploy` re-checks its pinned items and fails fast when one is missing.
-- `dump` delegates to the bench's own dump target; the riscv64, riscv64-nemu and both
+- `dump` delegates to the bench's own dump target; the riscv64 lanes (both variants),
+  riscv64-nemu (both variants) and both
   CHERI lanes refuse by design — every system lane's corpus is staged corpus-keyed
   (the riscv64 and CHERI binaries live inside their guest images), so there are no
   in-tree `test/<program>` builds to disassemble.
@@ -116,9 +129,25 @@ make ARCH=<lane> [enable_aarch64_<pa|bti|mte>=yes] <deploy|run|clean|dump>
   `-kernel`) and hand the corpus in over virtio-9p. The riscv64-nemu lane boots the image
   its deploy assembled under the pinned `../NEMU` interpreter and parses the guest console
   for results (there is no share). Per-lane mechanics: [doc/lanes.html](doc/lanes.html).
+- The arming chain of the two CFI variants: the platform must **advertise**
+  `zicfiss`/`zicfilp` (the qemu CPU pin; the venue's `dtc-cfi.sh` interposer appends
+  them to the generated DTS — variant only, the plain lanes assert an
+  advertisement-free DTB), OpenSBI v1.9 advertises the SBI FWFT LANDING_PAD and
+  SHADOW_STACK features, the kernel's `CONFIG_RISCV_USER_CFI` enables the per-thread
+  interface, and the corpus's own `.init_array` entry arms the thread (Zicfiss only;
+  forward-edge/LPE arming awaits a CFI-built libc). Each link has a distinct failure
+  signature — a code-20 record means the self-arm failed, never a measurement.
+- **The lane cleanup clears the parent make's `MAKEFLAGS`.** The venue builds its guest
+  scheduler inside the tracked submodule, and a variant recipe's inherited
+  `ARCH`/class flag makes the bench Makefile's guard kill a plain `make -C benchmark
+  clean`; all three cleanup sites therefore run `env -u MAKEFLAGS -u MFLAGS -u ARCH -u
+  enable_riscv64_cfi make -C benchmark clean`, fail the lane on a non-zero rc, and
+  assert `benchmark/run-test` is absent — a gitignored RISC-V runner left behind is
+  otherwise executed by the next host lane through binfmt.
 - Provenance: every stamp's `versions.txt` is the host record (pins, dpkg versions,
   `uname`); on the riscv64 lane the guest-side truth is the guest's own
-  `test/sys_info.txt`.
+  `test/sys_info.txt`; the riscv64 family's stamps add the firmware identity, and the
+  NEMU lanes add the interpreter's commit and binary sha256.
 - Trust boundary: the corpus is adversarial by design. The host lanes run it unsandboxed
   with the invoking user's privileges — deliberately, and only on this workstation; the
   VM lanes are isolated by disposable `-snapshot` guests. The riscv64-nemu lane executes

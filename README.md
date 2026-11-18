@@ -18,8 +18,22 @@ on every supported architecture from a single repository:
   exported `QEMU_VERSION` made each case print the emulator's version and exit 0,
   so those stamps carry no test information (see *Known caveats* before comparing
   anything against them).
-- **riscv64** — host-built corpus booted inside a Linux 6.18.56 guest under
+- **riscv64** — host-built corpus booted inside a Linux 7.3.4 guest under
   `qemu-system-riscv64` (`-M virt`), results extracted over a virtio-9p share.
+  The guest boots the `fw_jump.bin` this repository builds from its pinned
+  OpenSBI v1.9 (not QEMU's bundled blobs).
+- **riscv64-cfi**, **riscv64-nemu-cfi** — the *armed* variants of the two lanes
+  above: the same corpus built with the bench's RISC-V ISA-CFI build class
+  (`enable_riscv64_cfi=yes`, GCC 16.1.0, `-march=rv64gc_zicfilp_zicfiss
+  -fcf-protection=full`), so every corpus binary arms a Zicfiss shadow stack at
+  startup and reports a hardware control-flow-protection violation as the CFI
+  delivery codes (30 backward edge, 31 forward edge). Arming is gated on the
+  **platform's** ISA advertisement, so the two variants alone boot a
+  CFI-advertising platform: the qemu variant requests
+  `-cpu rva23s64,zicfiss=on,zicfilp=on`, and the NEMU variant's venue DTS gains
+  the two extension strings through a dtc interposer. The plain lanes keep an
+  advertisement-free platform, because an advertising DT in front of an
+  interpreter without the `ssp` CSR is a boot panic.
 - **CHERI** — two real lanes, `cheri_riscv64` and `aarch64-morello`: purecap
   CheriBSD 15.0-CURRENT guests under CHERI-LLVM's `qemu-system-riscv64xcheri`
   and `qemu-system-morello`, booted from pinned disk images with the corpus
@@ -29,11 +43,13 @@ on every supported architecture from a single repository:
   rows (see *Known caveats*).
 - **riscv64-nemu** — the absorbed in-repo NEMU venue package
   (`scripts/riscv64_nemu/venue/`): the host-built corpus and the
-  riscv64 scheduler run inside a Linux 6.18.56 guest emulated by the workspace's
+  riscv64 scheduler run inside a Linux 7.3.4 guest emulated by the workspace's
   XiangShan NEMU (`../NEMU`, commit-pinned), with results extracted from the
   guest console. Deploy-first, like the system lanes; the NEMU location is a
   relative default, so the lane follows the workspace layout without an
-  absolute path in `env.sh`.
+  absolute path in `env.sh`. The `riscv64-nemu-cfi` variant instead boots the
+  workspace's CFI-verified checkout (`../NEMU-cfi`, commit- **and**
+  binary-sha256-pinned).
 
 The benchmark itself lives in the `benchmark/` git submodule
 (`comparch-security/cpu-sec-bench`), consumed read-only at the commit pinned in
@@ -51,14 +67,18 @@ sudo apt install qemu-system-riscv qemu-system-data qemu-user qemu-user-binfmt \
                  libhwasan0-arm64-cross
 ```
 
-- `qemu-system-riscv` / `qemu-system-data` (10.2.1) — the riscv64 lane's emulator
-  and the OpenSBI blobs that `-bios default` uses.
+- `qemu-system-riscv` / `qemu-system-data` (10.2.1) — the riscv64 lanes'
+  emulator. The lanes boot the `fw_jump.bin` built from the pinned OpenSBI, so
+  `qemu-system-data`'s bundled blobs are no longer the lane's firmware source;
+  the riscv64 guest kernel is built with the GCC 16.1.0 toolchain below, because
+  its `CONFIG_RISCV_USER_CFI` Kconfig gate is a `cc-option` probe that gcc-13
+  fails (the symbol then vanishes silently).
 - `qemu-user` + `qemu-user-binfmt` (10.2.1) — the aarch64 lane's execution path:
   every aarch64 ELF runs under `qemu-aarch64` via the kernel's binfmt handler
   (registering that handler is root-only, which is why it is in this list).
-- The cross toolchains (13.4.0) build the riscv64 corpus and guest image and the
-  aarch64 corpus; `libhwasan0-arm64-cross` supplies the MTE lane's
-  `-fsanitize=hwaddress` runtime.
+- The cross toolchains (13.4.0) build the plain riscv64 family's corpus, the
+  guest image and the aarch64 corpus; `libhwasan0-arm64-cross` supplies the MTE
+  lane's `-fsanitize=hwaddress` runtime.
 - A built XiangShan NEMU interpreter for the `riscv64-nemu` lane: a sibling
   `NEMU` checkout resolved by the repo-relative default
   `NEMU_DIR=../NEMU` with `NEMU_BIN=$NEMU_DIR/build/riscv64-nemu-interpreter`
@@ -66,6 +86,19 @@ sudo apt install qemu-system-riscv qemu-system-data qemu-user qemu-user-binfmt \
   overridable pair (absolute paths allowed); the lane records the binary's
   sha256 and compares it run-to-run rather than pinning it, so a stale local
   build is disclosed, not silently reused.
+- **GCC 16.1.0 riscv64 toolchain** (`riscv64-unknown-linux-gnu-*`) for the guest
+  kernel and the two CFI variant lanes — the workspace's `riscv-gnu-toolchain`
+  build, resolved by the repo-relative default
+  `RISCV64_GNU_PREFIX=../riscv/bin/riscv64-unknown-linux-gnu-` (an absolute
+  override wins). gcc-13 has neither Zicfilp/Zicfiss nor the user-CFI Kconfig
+  gate, so the kernel and the armed corpus cannot be built with it. The plain
+  lanes' corpus stays on the apt cross toolchains above.
+- A CFI-verified NEMU checkout for the `riscv64-nemu-cfi` lane: a sibling
+  `NEMU-cfi` at the pinned `NEMU_CFI_COMMIT` (NEMU master plus the Zicfiss/
+  Zicfilp implementation, validated by the workspace's CFI research cycles),
+  with `NEMU_CFI_BIN=$NEMU_CFI_DIR/build/riscv64-nemu-interpreter` — the
+  binary's sha256 is a hard pin here, because an interpreter that is not the
+  CFI-verified build must not publish an armed stamp.
 
 The CHERI lanes additionally build their two emulators and their guests with the
 pinned `cheribuild`, which needs five more host packages:
@@ -97,28 +130,36 @@ naming whatever is missing.
 ## Usage
 
 ```bash
-make ARCH=<lane> [enable_aarch64_<pa|bti|mte>=yes] <deploy|run|clean|dump>
+make ARCH=<lane> [enable_aarch64_<pa|bti|mte>=yes] [enable_riscv64_cfi=yes] <deploy|run|clean|dump>
 ```
+
+The `enable_riscv64_cfi=yes` flag turns a riscv64-family lane into its armed
+variant: on `ARCH=riscv64` it selects lane `riscv64-cfi`, on `ARCH=riscv64-nemu`
+lane `riscv64-nemu-cfi` (it is refused on every other lane, and so is combining
+it with `enable_riscv64_cheri`).
 
 | Command | What it does |
 |---|---|
 | `make ARCH=x86_64 run` | Builds and runs the bench natively; results in `results/x86_64/<stamp>/` |
 | `make ARCH=aarch64 run` | Plain aarch64 lane (through binfmt) |
 | `make ARCH=aarch64 enable_aarch64_pa=yes run` | Pointer-auth variant (same for `bti`, `mte`; one variant at a time) |
-| `make ARCH=riscv64 deploy` | Builds kernel + busybox + rootfs image + corpus (`build/riscv64/`) |
+| `make ARCH=riscv64 deploy` | Builds the OpenSBI firmware, kernel + busybox + rootfs image + corpus (`build/riscv64/`) |
 | `make ARCH=riscv64 run` | Boots the image, runs the corpus in the guest, extracts results |
+| `make ARCH=riscv64 enable_riscv64_cfi=yes deploy` / `run` | The armed variant (`riscv64-cfi`): the same deploy plus the CFI corpus build and a CFI-advertising CPU pin; artifacts under `build/riscv64-cfi/` and `results/riscv64-cfi/` |
 | `make ARCH=cheri_riscv64 deploy` | Builds the CHERI riscv64 emulator, the CheriBSD disk image and the corpus (a cold `deploy` is a world build — hours) |
 | `make ARCH=cheri_riscv64 run` | Boots the pinned image under `qemu-system-riscv64xcheri`, runs the corpus in the guest, collects results in `results/cheri_riscv64/<stamp>/` |
 | `make ARCH=aarch64-morello deploy` / `run` | The Morello lane (`qemu-system-morello`, UEFI + `loader(8)`); results in `results/aarch64-morello/<stamp>/` |
 | `make ARCH=riscv64-nemu deploy` | Stages the corpus through the shared orchestrator and builds the guest image and its rootfs through the absorbed venue package (`build/riscv64-nemu/`); seeded caches make it run offline |
 | `make ARCH=riscv64-nemu run` | Boots the image under the pinned NEMU, runs the whole suite in the guest, extracts the results from the console |
+| `make ARCH=riscv64-nemu enable_riscv64_cfi=yes deploy` / `run` | The armed NEMU variant (`riscv64-nemu-cfi`): boots the pinned `../NEMU-cfi` interpreter over a CFI-advertising venue DTB; artifacts under `build/riscv64-nemu-cfi/` and `results/riscv64-nemu-cfi/` |
 | `make ARCH=<lane> clean` | Removes that lane's build tree and the bench's generated files |
 | `make ARCH=x86_64 dump` | The bench's own dump target (the system lanes refuse: their corpora are staged corpus-keyed — riscv64's and the CHERI lanes' binaries live inside their guest images) |
 
 `ARCH` defaults to the host architecture. `deploy` is implicit for the host
-lanes — `run` does everything. For the riscv64, riscv64-nemu and CHERI lanes,
+lanes — `run` does everything. For the riscv64 family (both plain and armed
+variants), riscv64-nemu and CHERI lanes,
 run `deploy` first, then `run` (each is wrapped in its own `timeout`, except the
-riscv64-nemu lane: its run leg carries no outer `timeout`, and its bound is
+riscv64-nemu family: its run leg carries no outer `timeout`, and its bound is
 two-tier instead — the platform's inner NEMU timeout at `LANE_RUN_TIMEOUT` and
 the lane's own watchdog at `LANE_RUN_TIMEOUT + 120 s`, so the platform's
 diagnosis fires first). The
@@ -149,6 +190,11 @@ publishing anything.
 ```
 build/<lane>/               lane build trees
                             riscv64: kernel/ busybox/ stage/ Image rootfs.cpio manifest.json
+                                     (plus fw_jump.bin, built from the pinned OpenSBI)
+                            riscv64-cfi: its own stage/ manifest.json and corpus; the
+                                     kernel Image and fw_jump.bin are shared, read-only
+                            riscv64-nemu-cfi: its own platform/ + corpus/, seeded from
+                                     the plain lane's platform sources
                             (the image manifest and the corpus manifest live under
                              build/, not in results/)
 results/<lane>/<UTC-stamp>/ results.json  results.dat  versions.txt
@@ -168,6 +214,11 @@ results/riscv64-nemu/<UTC-stamp>/   results.json  results.dat  boot.log
                             (+ variables.json when the registry's set-var
                              records ran; the deploy's corpus and image live
                              under build/riscv64-nemu/platform/)
+results/riscv64-cfi/<UTC-stamp>/     results.json  results.dat  versions.txt
+                            boot.log  guest-status.txt  (the armed qemu variant)
+results/riscv64-nemu-cfi/<UTC-stamp>/   results.json  results.dat  boot.log
+                            meta.json  meta.deploy.json  versions.txt
+                            (the armed NEMU variant; same shape as its plain lane)
 results/comparison-<UTC>/   comparison.json  comparison.md — the lane-comparison
                             snapshot (machine-local; see *Comparing lanes*)
 ```
@@ -205,7 +256,11 @@ selected lane against the pin itself: the registry is read with
 `git show <pin>:configure.json`, so the classification source is pinned by
 construction and immune to checkout drift between the lane runs and the gate.
 The default lane set is the seven executable lanes (x86_64, the four aarch64
-variants, riscv64, riscv64-nemu); `--reference` (default `x86_64`) is the lane
+variants, riscv64, riscv64-nemu); the two armed variants (`riscv64-cfi`,
+`riscv64-nemu-cfi`) are **not** in the default set — they are named explicitly
+with `--lanes` and are part of the pin-uniform set whenever they carry stamps,
+because their results are only meaningful against the same pin.
+`--reference` (default `x86_64`) is the lane
 every other lane's codes are compared against; `--out` (default
 `results/comparison-<UTC>-<pid>`) is where the snapshot's `comparison.json` and
 `comparison.md` land.
@@ -251,14 +306,17 @@ All pins live in `env.sh` only — no script hard-codes them.
 
 | Item | Pin |
 |---|---|
-| bench commit | `cbe3bf9b67c8ca8b8eca9567ad3d09ca10dade1a` — makes the benchmark a portable core: the embedded venue (`platform/riscv64-nemu-linux/`) is gone (this repository stages every system lane's corpus itself and carries the NEMU venue package), and the CHERI/Morello build skips are declared in the tracked registry, whose `skip` rows name the arch token a record does not build on and its cause (the Morello build bakes a distinct token, so its rows cannot collide with the healthy aarch64 lanes). All seven executable lanes carry stamps at this pin (2026-10-31 uniform re-stamp); the two CHERI lanes keep their previous-pin stamps and are excluded from the pin-uniform comparison by design |
+| bench commit | `182652b7efaadca7900beb3ce2a74ec3282e2565` — bench cycle 3's head: `2aaf895` fixes the Zicfiss self-arm lock argument (the RISC-V `PR_LOCK_SHADOW_STACK_STATUS` takes `0`), `216da4ee` declares the armed class's allocator aborts and fixes the stack-offset calibration, and `182652b` anchors that calibration at the call's return site (`lpad 0` plus 4-byte label alignment defeats a label-address scan). Beneath them `cbe3bf9` made the benchmark a portable core: the embedded venue (`platform/riscv64-nemu-linux/`) is gone (this repository stages every system lane's corpus itself and carries the NEMU venue package), and the CHERI/Morello build skips are declared in the tracked registry, whose `skip` rows name the arch token a record does not build on and its cause (the Morello build bakes a distinct token, so its rows cannot collide with the healthy aarch64 lanes). All nine executable lanes carry stamps at this pin (2026-11-18 re-stamp); the two CHERI lanes keep their previous-pin stamps and are excluded from the pin-uniform comparison by design |
 | NEMU | `../NEMU` @ `ae1ec3cd869b9c5e1783af691538d5c26f37ee55` — the workspace checkout; `NEMU_DIR`/`NEMU_BIN` are a relative-default pair, and the binary's sha256 is recorded and compared run-to-run, **not** pinned |
+| NEMU-cfi | `../NEMU-cfi` @ `668eb688a7478fa8863220d8f81033ed786f6bb9` (NEMU master plus the Zicfiss/Zicfilp implementation, CFI-verified by the workspace's research cycles) — the `riscv64-nemu-cfi` lane's interpreter; `NEMU_CFI_DIR`/`NEMU_CFI_BIN` are a relative-default pair and the binary's sha256 **is** pinned (`NEMU_CFI_BIN_SHA256`) |
 | NEMU venue inputs | workload-builder `b7c321dec6ad6f4c78abcaefc722b59b4043503c`, OpenSBI `cbf9f6734dd85a982c63e3cb5db7ffe09da839ca`, LibCheckpointAlpha `5169da768d18f4682a489eaabe7c071df6d6ef88` — the absorbed image builder's upstream sources, one pin per input in `env.sh` |
-| riscv64 toolchain | `riscv64-linux-gnu-{g++-13,gcc-13,as,objdump}` (Ubuntu gcc-13 cross 13.4.0) |
+| riscv64 toolchain | `riscv64-linux-gnu-{g++-13,gcc-13,as,objdump}` (Ubuntu gcc-13 cross 13.4.0) — the plain lanes |
+| riscv64 CFI toolchain | `riscv64-unknown-linux-gnu-{gcc,g++,as,objdump}` (GCC 16.1.0, `RISCV64_GNU_PREFIX=../riscv/bin/…`) — the guest kernel and the two CFI variant lanes |
 | aarch64 toolchain / sysroot | `aarch64-linux-gnu-{g++-13,gcc-13,as,objdump}`, `/usr/aarch64-linux-gnu` |
 | QEMU | 10.2.1 (`qemu-system-riscv64`, `qemu-aarch64`) |
-| QEMU CPU models | riscv64 `rva23s64` (`-M virt`, `-bios default`, 256 MiB); the aarch64 `pa`, `bti` and `mte` lanes each request `QEMU_CPU=max` (under three per-lane names in `env.sh`) — the venue's default model **plus** PAuth (`max` is *not* the default: left unset, this `qemu-aarch64` behaves as `max,pauth=off`, byte-identical HWCAP). The `pa` request is load-bearing (its `retaa` epilogue SIGILLs without FEAT_PAuth) and so is the `bti` request at this pin (the bti class's `-march=armv8.5-a` implies PAuth, and the bench's `STRIP_PAC()` compiles to `xpaci`, which traps without FEAT_PAuth) — see *Known caveats* |
-| guest kernel | Linux 6.18.56 (kernel.org tarball, sha256-verified) |
+| QEMU CPU models | riscv64 `rva23s64` (`-M virt`, 256 MiB, the built `build/riscv64/fw_jump.bin`); `riscv64-cfi` `rva23s64,zicfiss=on,zicfilp=on` (RVA23 does not include the CFI extensions, and QEMU only advertises them as opt-in properties — measured: the base profile emits a guest DT with zero `zicfiss`/`zicfilp` hits, the property form two); the aarch64 `pa`, `bti` and `mte` lanes each request `QEMU_CPU=max` (under three per-lane names in `env.sh`) — the venue's default model **plus** PAuth (`max` is *not* the default: left unset, this `qemu-aarch64` behaves as `max,pauth=off`, byte-identical HWCAP). The `pa` request is load-bearing (its `retaa` epilogue SIGILLs without FEAT_PAuth) and so is the `bti` request at this pin (the bti class's `-march=armv8.5-a` implies PAuth, and the bench's `STRIP_PAC()` compiles to `xpaci`, which traps without FEAT_PAuth) — see *Known caveats* |
+| riscv64 firmware | OpenSBI v1.9 `cbf9f6734dd85a982c63e3cb5db7ffe09da839ca`, built as a generic `fw_jump` into `build/riscv64/fw_jump.bin` and booted by both riscv64 lanes — it advertises the SBI FWFT LANDING_PAD + SHADOW_STACK features user-mode CFI needs, which QEMU's bundled firmware does not |
+| guest kernel | Linux 7.3.4 (kernel.org tarball, sha256-verified) — the 7.x line is the first with `CONFIG_RISCV_USER_CFI`; one lane-agnostic config serves all four riscv64-family lanes |
 | busybox | 1.36.1 (static, sha256-verified) |
 | cheribuild | `db2f0360381e5fa2d50379e92ad119bb98db25c4` |
 | CHERI QEMU | `CHERI-Alliance/qemu` @ `32bf55e2965dcdcfb0139d209e7a7b9dd1314583` — targets `riscv64xcheri-softmmu,morello-softmmu` (QEMU 7.2.0) |
@@ -388,8 +446,9 @@ corpus without adding isolation first.
   `CONFIG_RISCV_ISA_V` and trapped the first `vsetivli` with signal 4), and it
   must *default* vector on (`CONFIG_RISCV_ISA_V_DEFAULT_ENABLE=y` — the kernel
   backs `abi/riscv_v_default_allow` with `IS_ENABLED(…)`), because Ubuntu's
-  glibc never issues the V prctl itself. The lane pins 6.18.56 and its kernel
-  fragment forces both symbols.
+  glibc never issues the V prctl itself. The lane pins 7.3.4 (the 7.x line is
+  the first with `CONFIG_RISCV_USER_CFI`) and its kernel fragment forces the
+  vector symbols plus the user-CFI symbol.
 - **The NEMU / XiangShan venue has its own lane, not a riscv64-lane boot.** The
   riscv64 lane's image is qemu-virt-only by decision, not NEMU-bootable; the NEMU
   route is `riscv64-nemu`, which builds its own image through the absorbed
@@ -455,17 +514,38 @@ corpus without adding isolation first.
   the built binary's opcode census must find `xpaci`, so the leg cannot pass
   vacuously. A bti stamp carrying SIGILL-class results on its return-hijack
   records is an execution-venue failure, never a defence observation.
-- **The bench pin is uniform across the seven executable lanes.** The
-  2026-10-31 re-stamp moved `x86_64`, all four aarch64 variants, `riscv64` and
-  `riscv64-nemu` to the current pin in one cycle (the 2026-10-27 cycle did the
-  same for the pin before it), each lane's older stamps
+- **The bench pin is uniform across the nine executable lanes.** The
+  2026-11-18 re-stamp moved `x86_64`, all four aarch64 variants, `riscv64`,
+  `riscv64-nemu` and the two armed variants to the current pin in one cycle
+  (the earlier cycles did the same for the pins before it), each lane's older
+  stamps
   relocated under `results/<lane>/retired-<pin>/`; the two CHERI lanes keep
   their previous-pin stamps and are excluded from the pin-uniform comparison by
   design (see the CHERI caveat above). Every statement in this file measured
   "at `f4c916a`", "`47d6f9d`" or the pins between has been re-derived or is
   explicitly dated to
   those eras; the lane-comparison snapshot is the measure-on-demand record of
-  how the seven lanes classify at the current pin.
+  how the nine lanes classify at the current pin.
+- **The two armed variants publish a non-zero gate on purpose.** Every corpus
+  binary of the CFI class arms a shadow stack at startup, so the armed lanes
+  legitimately move records outside their plain-lane declared sets: the qemu
+  variant's calibration and memory-corruption families trap on the armed build
+  (codes 30, 260/267/262/216/192/184/136), and only 2 of its 16 declared-30 rows
+  complete the attack — the ACC calibration chain that publishes the stack
+  offsets is itself caught on that platform, while the NEMU variant reaches
+  12/16. The distinction is a registry/attack-staging question owned by the bench
+  repo (a deferred issue carries it) — the env-side arming chain itself is green
+  on both lanes: platform advertisement, OpenSBI v1.9 FWFT, kernel
+  `CONFIG_RISCV_USER_CFI`, the self-arm blob's lock and `ssrdp` readback, and the
+  GCC 16 corpus all verify. Compare the armed lanes against each other and
+  against their plain counterparts, never as a pass/fail gate against the
+  seven-lane baseline.
+- **`riscv64-cfi` and `riscv64-nemu-cfi` stage byte-identical corpus binaries
+  but behave differently.** On the same staged files the qemu variant traps the
+  memory-corruption records that the NEMU variant completes benignly; which
+  implementation is conformant is an open question for the NEMU CFI research
+  cycles, not something this environment adjudicates. Treat a divergence between
+  the two armed lanes as a measurement, not as a lane failure.
 - **`.claude/` is machine-local and ignored wholesale.** Agent-tooling
   configuration in the repo root is machine-local by the 2026-10-24 policy:
   `.gitignore` covers it alongside `build/`, `results/` and `tmp/`. Unlike the

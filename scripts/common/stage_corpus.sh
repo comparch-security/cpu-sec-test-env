@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# stage_corpus.sh LANE OUT_DIR [--enable-flag enable_aarch64_morello]
+# stage_corpus.sh LANE OUT_DIR [--enable-flag enable_aarch64_morello|enable_riscv64_cfi]
 #
 # The ONE corpus-staging path for every system lane.  It drives the pinned
 # runner's own corpus mode and stages the result under OUT_DIR:
@@ -31,11 +31,16 @@ set -euo pipefail
 # Lanes (env lane -> bench token, the spelling the registry's skip rows use):
 #   riscv64          ARCH=riscv64      token riscv64
 #   riscv64-nemu     ARCH=riscv64      token riscv64
+#   riscv64-cfi          ARCH=riscv64  token riscv64  (enable_riscv64_cfi;
+#                        the GCC 16 toolchain + the bench CFI build class)
+#   riscv64-nemu-cfi     ARCH=riscv64  token riscv64  (enable_riscv64_cfi)
 #   cheri_riscv64    ARCH=cheri_riscv64 token cheri_riscv64  (enable_riscv64_cheri)
 #   aarch64-morello  ARCH=aarch64      token aarch64-morello (enable_aarch64_morello)
-# --enable-flag is accepted only as exactly `enable_aarch64_morello`, and only
-# for the aarch64-morello lane; the flag rides the corpus invocation's
-# ENVIRONMENT because the runner's child makes take no command-line flags.
+# --enable-flag is accepted only as exactly `enable_aarch64_morello` for the
+# aarch64-morello lane or `enable_riscv64_cfi` for the two CFI variants, and
+# an empty value is a usage error (never `none`).  The flag rides the corpus
+# invocation's ENVIRONMENT because the runner's child makes take no
+# command-line flags.
 
 di() { echo "stage_corpus: $*" >&2; }
 
@@ -44,7 +49,13 @@ OUT_DIR=""
 ENABLE_FLAG_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --enable-flag) ENABLE_FLAG_ARG=${2:-}; shift ;;
+    --enable-flag)
+      ENABLE_FLAG_ARG=${2:-}
+      if [ -z "$ENABLE_FLAG_ARG" ]; then
+        di "--enable-flag requires a non-empty flag name"
+        exit 2
+      fi
+      shift ;;
     -*)            di "unknown option '$1'"; exit 2 ;;
     *)
       if [ -z "$LANE" ]; then LANE=$1
@@ -55,22 +66,23 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$LANE" ] || [ -z "$OUT_DIR" ]; then
-  echo "usage: $0 LANE OUT_DIR [--enable-flag enable_aarch64_morello]" >&2
+  echo "usage: $0 LANE OUT_DIR [--enable-flag enable_aarch64_morello|enable_riscv64_cfi]" >&2
   exit 2
 fi
 
 case "$LANE" in
-  riscv64|riscv64-nemu|cheri_riscv64|aarch64-morello) ;;
+  riscv64|riscv64-nemu|riscv64-cfi|riscv64-nemu-cfi|cheri_riscv64|aarch64-morello) ;;
   *)
-    di "unknown lane '$LANE' (expected riscv64 | riscv64-nemu | cheri_riscv64 | aarch64-morello)"
+    di "unknown lane '$LANE' (expected riscv64 | riscv64-nemu | riscv64-cfi | riscv64-nemu-cfi | cheri_riscv64 | aarch64-morello)"
     exit 2
     ;;
 esac
 case "${ENABLE_FLAG_ARG:-none}:$LANE" in
   none:*) ;;
   enable_aarch64_morello:aarch64-morello) ;;
+  enable_riscv64_cfi:riscv64-cfi|enable_riscv64_cfi:riscv64-nemu-cfi) ;;
   *)
-    di "--enable-flag is accepted only as '--enable-flag enable_aarch64_morello' for the aarch64-morello lane"
+    di "--enable-flag is accepted only as '--enable-flag enable_aarch64_morello' for aarch64-morello, or '--enable-flag enable_riscv64_cfi' for riscv64-cfi | riscv64-nemu-cfi"
     exit 2
     ;;
 esac
@@ -166,6 +178,22 @@ case "$LANE" in
     VER_CXX=$RISCV64_CXX
     SHIM_PREFIX="${RISCV64_OBJDUMP%-objdump}"
     ;;
+  riscv64-cfi|riscv64-nemu-cfi)
+    # The armed variants: the bench's CFI build class.  The bench ARCH and skip
+    # token stay riscv64 - the class builds lib/riscv64/ and the registry rows
+    # are riscv64's - so only the toolchain and the class flag move.  GCC 16
+    # emits lpad/sspush/sspopchk (gcc-13 has no Zicfilp/Zicfiss); the prefix
+    # ends in `-`, so g++/as/objdump append to it directly.
+    case "$RISCV64_GNU_PREFIX" in /*) ;; *) RISCV64_GNU_PREFIX="$ROOT/$RISCV64_GNU_PREFIX" ;; esac
+    [ -x "${RISCV64_GNU_PREFIX}gcc" ] ||
+      { di "CFI toolchain not found: ${RISCV64_GNU_PREFIX}gcc (RISCV64_GNU_PREFIX=$RISCV64_GNU_PREFIX) - install it or override RISCV64_GNU_PREFIX"; exit 1; }
+    BENCH_ARCH=riscv64; TOKEN=riscv64; LANE_FLAG=enable_riscv64_cfi
+    CXX="${RISCV64_GNU_PREFIX}g++"; ASM="${RISCV64_GNU_PREFIX}as"; OBJDUMP="${RISCV64_GNU_PREFIX}objdump"
+    VER_CXX="${RISCV64_GNU_PREFIX}g++"
+    # The shim takes an absolute TOOL PATH (its `/*` branch): an absolute
+    # PREFIX is not a valid argument and dies "not an executable".
+    SHIM_PREFIX=$OBJDUMP
+    ;;
   cheri_riscv64)
     BENCH_ARCH=cheri_riscv64; TOKEN=cheri_riscv64; LANE_FLAG=enable_riscv64_cheri
     CLANG=$(find_sdk_clang "$CHERI_BROOT/output/sdk/bin") ||
@@ -200,7 +228,22 @@ case "$LANE" in
     VER_CXX=$CLANG
     SHIM_PREFIX="${AARCH64_OBJDUMP%-objdump}"
     ;;
+  *) di "unknown lane '$LANE'"; exit 2 ;;
 esac
+
+# A case arm that forgot an assignment leaves its variable empty, and `set -u`
+# cannot catch it (the variables are initialised above); the corpus build
+# would then run with an empty ARCH or skip token.  LANE_FLAG is legitimately
+# empty for the unflagged lanes, so its presence must match the enable-flag
+# argument's instead.
+if [ -z "$BENCH_ARCH" ] || [ -z "$TOKEN" ]; then
+  di "lane '$LANE': the toolchain arm left BENCH_ARCH/TOKEN empty"
+  exit 2
+fi
+if [ -n "$ENABLE_FLAG_ARG" ] && [ -z "$LANE_FLAG" ]; then
+  di "lane '$LANE': --enable-flag $ENABLE_FLAG_ARG was given but the toolchain arm set no LANE_FLAG"
+  exit 2
+fi
 
 SHIM_DIR="$ROOT/$BUILD_DIR/$LANE/shim"
 bash "$ROOT/scripts/common/shim.sh" "$SHIM_PREFIX" "$SHIM_DIR"
@@ -223,7 +266,15 @@ tar -C "$ROOT/benchmark" \
 # nothing about them).  The clean recipe is `-rm -rf ...` -- the leading dash
 # makes make ignore a failing `rm` -- so its exit status cannot carry the
 # guarantee; assert the generated roots are actually gone instead.
-env -u MAKEFLAGS -u MFLAGS -u ARCH make -C "$SCRATCH" clean
+#
+# The deploy's own `make ARCH=... enable_riscv64_cfi=yes deploy` exports the
+# class flag into this script's environment (a command-line make variable rides
+# the environment into every child), and the bench Makefile's guard fires when
+# it meets a make whose ARCH is not riscv64
+# (`enable_riscv64_cfi=yes requires ARCH=riscv64, not ARCH=x86_64`).  Both
+# host-side makes therefore drop the flag BY NAME; only the [3/5] corpus build
+# may see it, re-exported there from LANE_FLAG with ARCH=riscv64.
+env -u MAKEFLAGS -u MFLAGS -u ARCH -u enable_riscv64_cfi make -C "$SCRATCH" clean
 # The clean list is ARCH-scoped (lib/$(ARCH)/...), so a work tree cross-built
 # for another lane keeps lib/riscv64/*.o and lib/aarch64/*.o across this
 # host-ARCH clean -- exactly the objects the corpus build would reuse.
@@ -244,6 +295,7 @@ stale_obj="$(find "$SCRATCH/lib" -name '*.o' -print -quit)"
 # the registry's rows are written in.
 echo "== stage_corpus ($LANE): host runner (token $TOKEN)"
 (cd "$SCRATCH" && env -u CXX -u ASM -u OBJDUMP -u MAKEFLAGS -u MFLAGS -u ARCH \
+    -u enable_riscv64_cfi \
     make -B run-test CSB_TARGET_ARCH="$TOKEN" >/dev/null)
 machine=$(readelf -h "$SCRATCH/run-test" | awk -F: '/Machine:/{gsub(/^[ \t]+/,"",$2); print $2}')
 case "$machine" in

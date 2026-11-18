@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="last-modified" content="2026-10-31">
+    <meta name="last-modified" content="2026-11-19">
     <title>Lanes | cpu-sec-test-env</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -193,12 +193,17 @@
         <h2>riscv64</h2>
         <p>
             <code>deploy</code> builds the guest from pinned sources: the kernel
-            (sha256-verified tarball; the lane's fragment forces userspace vector
-            default-on), a static busybox, and a byte-reproducible rootfs image —
-            identity pins for the build metadata, normalized mtimes,
+            (sha256-verified 7.3.4 tarball, built with GCC 16.1.0 because its
+            <code>CONFIG_RISCV_USER_CFI</code> Kconfig gate is a
+            <code>cc-option</code> probe gcc-13 fails; the lane's fragment forces
+            userspace vector default-on), a static busybox, the OpenSBI v1.9
+            <code>fw_jump.bin</code> the lane boots, and a byte-reproducible rootfs
+            image — identity pins for the build metadata, normalized mtimes,
             <code>LC_ALL=C</code> ordering and a device-independent cpio archive.
             <code>run</code> boots the image under <code>qemu-system-riscv64</code>
-            (<code>-M virt</code>, OpenSBI's default firmware) with the pinned
+            (<code>-M virt</code>, the built <code>build/riscv64/fw_jump.bin</code>
+            — not QEMU's bundled blobs, which advertise no SBI FWFT features) with
+            the pinned
             <code>rva23s64</code> CPU model — every executable the distro cross
             toolchain links declares the RVA23U64 profile, so a narrower model
             would be a latent illegal instruction inside the guest's own libc —
@@ -208,6 +213,51 @@
             the staged corpus and copies its results back. There is no
             console parsing and no <code>dump</code> target: the binaries live
             inside the guest image.
+        </p>
+
+        <h2>riscv64-cfi, riscv64-nemu-cfi — the armed variants</h2>
+        <p>
+            One build-class flag, <code>enable_riscv64_cfi=yes</code>, applied to
+            either riscv64-family lane. It changes exactly three things: the corpus
+            is built with the bench's RISC-V ISA-CFI class
+            (<code>-march=rv64gc_zicfilp_zicfiss -fcf-protection=full</code>, GCC
+            16.1.0, <code>-DCSB_CFI_SELF_ARM</code>, so every corpus binary arms a
+            Zicfiss shadow stack from its own <code>.init_array</code>); the guest
+            kernel is built with the same toolchain and its
+            <code>CONFIG_RISCV_USER_CFI</code>; and the <em>platform</em> is made to
+            advertise <code>zicfiss</code>/<code>zicfilp</code> — the qemu lane via
+            <code>-cpu rva23s64,zicfiss=on,zicfilp=on</code> (RVA23 does not include
+            the CFI extensions; they are opt-in CPU properties), the NEMU lane via
+            <code>venue/dtc-cfi.sh</code>, a dtc interposer that appends the two
+            extension strings to the generated DTS.
+        </p>
+        <p>
+            The advertisement is deliberately variant-only. Arming is gated on it:
+            with an advertising DT in front of an interpreter that has no
+            <code>ssp</code> CSR, the kernel's first return to userspace is a total
+            boot panic (measured on the plain NEMU lane, 2026-11-17). The plain
+            lanes assert an advertisement-free compiled DTB; the variants assert the
+            opposite, two-sided.
+        </p>
+        <p>
+            Failure signatures are distinct, and the diagnosis order is: platform
+            advertisement (guest DT / boot log), kernel symbol and cmdline,
+            firmware FWFT probe (OpenSBI v1.9 advertises LANDING_PAD and
+            SHADOW_STACK), then the self-arm blob's own lock-and-<code>ssrdp</code>
+            canary. A record at code 20 on an armed lane is the self-arm fail path —
+            an arming failure, never a measurement. Delivery codes are 30 (backward
+            edge, <code>sspopchk</code>) and 31 (forward edge, landing pad).
+        </p>
+        <p>
+            Provisional results are the class's own: arming changes the corpus-wide
+            outcome, not only the <code>cfi-return-*</code> family — the qemu
+            variant's stack-offset calibrators are themselves caught, so its
+            declared-30 rows mostly report the "not demonstrated" code, while the
+            NEMU variant completes more of them. The two variants stage
+            byte-identical corpus binaries and still diverge; the registry and
+            attack-staging questions are owned by the bench repo (a deferred issue
+            carries them), so the armed lanes are read against each other and
+            against their plain counterparts, never as a pass/fail gate.
         </p>
 
         <h2>riscv64-nemu</h2>
@@ -269,6 +319,20 @@
             never executes as host code — NEMU interprets every guest
             instruction, and the guest's devices are NEMU's models over the image
             the deploy assembled.
+        </p>
+        <p>
+            The <code>riscv64-nemu-cfi</code> variant reuses the whole lane and
+            changes three inputs: the interpreter is the CFI-verified
+            <code>../NEMU-cfi</code> checkout (<code>NEMU_CFI_DIR</code>/
+            <code>NEMU_CFI_BIN</code>, commit <em>and</em> binary sha256 pinned —
+            an interpreter that is not the verified build must not publish an
+            armed stamp), the corpus and the guest are built with the CFI class and
+            the GCC 16 toolchain, and the generated DTS carries the
+            Zicfilp/Zicfiss advertisement through the <code>dtc-cfi.sh</code>
+            interposer. Its artifacts are lane-keyed
+            (<code>build/riscv64-nemu-cfi/</code>), seeded from the plain lane's
+            platform sources; the plain lane never sees the interposer and asserts
+            its compiled DTB carries no CFI string.
         </p>
 
         <h2>cheri_riscv64</h2>

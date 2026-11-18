@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# run.sh LANE   (LANE = riscv64-nemu)
+# run.sh LANE   (LANE = riscv64-nemu | riscv64-nemu-cfi)
 #
-# Runs the deployed riscv64-nemu image under XiangShan NEMU and publishes the
+# Runs a deployed riscv64-nemu image under XiangShan NEMU and publishes the
 # stamp: the absorbed venue package (scripts/riscv64_nemu/venue/run.sh) boots
 # the guest image, the guest prints the result files between ===CSB-...===
 # markers, and the driver carves them out of boot.log into runs/<ts>/.  This
 # wrapper owns the lane lock, the preflights, the process supervision, the
 # completeness gate and the stamp collection - no venue mechanism is
-# re-implemented here.
+# re-implemented here.  The CFI variant boots the workspace NEMU-cfi
+# interpreter (env.sh NEMU_CFI_*) and publishes under results/riscv64-nemu-cfi/;
+# its tree is lane-keyed, so the plain lane's newest-stamp selection can never
+# read an armed run.
 #
 # Publish policy (the repository's family rule): a timeout (rc 124, either the
 # lane watchdog or the venue's own boot-timeout diagnosis) publishes
@@ -35,8 +38,12 @@ set -euo pipefail
 # The image carries the full tracked registry; the run boots exactly the
 # deployed one (the deploy meta's image sha is re-verified below).
 
-if [ $# -ne 1 ] || [ "$1" != riscv64-nemu ]; then
-  echo "usage: $0 riscv64-nemu" >&2
+case "${1:-}" in
+  riscv64-nemu|riscv64-nemu-cfi) ;;
+  *) echo "usage: $0 riscv64-nemu|riscv64-nemu-cfi" >&2; exit 2 ;;
+esac
+if [ $# -ne 1 ]; then
+  echo "usage: $0 riscv64-nemu|riscv64-nemu-cfi" >&2
   exit 2
 fi
 LANE=$1
@@ -47,6 +54,15 @@ cd "$ROOT"
 . ./env.sh
 
 die() { echo "riscv64_nemu/run ($LANE): $*" >&2; exit 1; }
+
+# The variant's bench class flag must accompany its lane name: the stamp's
+# flag line is what keeps the armed run distinguishable from the plain one.
+case "$LANE" in
+  riscv64-nemu)     EXPECT_FLAG="" ;;
+  riscv64-nemu-cfi) EXPECT_FLAG=enable_riscv64_cfi ;;
+esac
+[ "${ENABLE_FLAG:-}" = "$EXPECT_FLAG" ] ||
+  die "ENABLE_FLAG=${ENABLE_FLAG:-<unset>} for lane $LANE, expected '${EXPECT_FLAG}' (make ARCH=riscv64-nemu enable_riscv64_cfi=yes run selects the variant)"
 
 # LANE_RUN_TIMEOUT reaches this script from the environment (env.sh's default
 # or the Makefile's forward) and is evaluated as a bash arithmetic expression
@@ -65,14 +81,25 @@ fi
 printf '%s\n' "$LANE" > "$BUILD_DIR/.lane.lock"
 
 VENUE="$ROOT/scripts/riscv64_nemu/venue"
-OUT="$ROOT/$BUILD_DIR/riscv64-nemu/platform"
-LANE_DIR="$ROOT/$BUILD_DIR/riscv64-nemu"
+LANE_DIR="$ROOT/$BUILD_DIR/$LANE"
+OUT="$LANE_DIR/platform"
 LOG="$LANE_DIR/run.log"
 
-# NEMU_DIR/NEMU_BIN are one overridable pair; relative values resolve against
-# the repository root (env.sh keeps its default relative on purpose).
+# The NEMU pins: the plain lane's overridable pair (NEMU_DIR/NEMU_BIN, relative
+# values resolved against the repository root), or the CFI-verified checkout
+# for the variant.  The variant's values are EXPORTED for the venue leg - the
+# venue re-sources env.sh, whose `:=` defaults then preserve them.
 case "$NEMU_DIR" in /*) ;; *) NEMU_DIR="$ROOT/$NEMU_DIR" ;; esac
 case "$NEMU_BIN" in /*) ;; *) NEMU_BIN="$ROOT/$NEMU_BIN" ;; esac
+if [ "$LANE" = riscv64-nemu ]; then
+  NEMU_PIN="$NEMU_COMMIT"
+else
+  case "$NEMU_CFI_DIR" in /*) ;; *) NEMU_CFI_DIR="$ROOT/$NEMU_CFI_DIR" ;; esac
+  case "$NEMU_CFI_BIN" in /*) ;; *) NEMU_CFI_BIN="$ROOT/$NEMU_CFI_BIN" ;; esac
+  NEMU_DIR="$NEMU_CFI_DIR"
+  NEMU_BIN="$NEMU_CFI_BIN"
+  NEMU_PIN="$NEMU_CFI_COMMIT"
+fi
 
 # ---- preflights: before the traps, so a failed preflight publishes nothing ----
 # The deploy's invariants: the submodule's HEAD is BENCH_COMMIT and its tree is
@@ -102,22 +129,25 @@ fi
   die "NEMU_BIN=$NEMU_BIN is not an executable regular file (NEMU_DIR=$NEMU_DIR) - build it, or override NEMU_DIR/NEMU_BIN together"
 nemu_head=$(git -C "$NEMU_DIR" rev-parse HEAD 2>/dev/null) ||
   die "NEMU_DIR=$NEMU_DIR is not a git checkout - override NEMU_DIR/NEMU_BIN together"
-[ "$nemu_head" = "$NEMU_COMMIT" ] ||
-  die "NEMU checkout $NEMU_DIR is at $nemu_head but NEMU_COMMIT pins $NEMU_COMMIT"
+[ "$nemu_head" = "$NEMU_PIN" ] ||
+  die "NEMU checkout $NEMU_DIR is at $nemu_head but the lane pins $NEMU_PIN"
 
 [ -f "$OUT/fw_payload.bin" ] ||
-  die "no image at $OUT/fw_payload.bin - run make ARCH=riscv64-nemu deploy first"
+  die "no image at $OUT/fw_payload.bin - run make ARCH=$LANE deploy first"
 # The deploy writes fw_payload.bin before its own meta.json, so a deploy that
 # died between the two leaves an image whose provenance is absent or stale;
 # booting it would publish a full stamp with contradictory evidence.
 [ -f "$OUT/meta.json" ] ||
-  die "no deploy meta at $OUT/meta.json - the deploy did not finish; run make ARCH=riscv64-nemu deploy first"
+  die "no deploy meta at $OUT/meta.json - the deploy did not finish; run make ARCH=$LANE deploy first"
 live_image_sha=$(sha256sum "$OUT/fw_payload.bin" | cut -d' ' -f1)
 deploy_image_sha=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["fw_payload_bin"]["sha256"] or "")' "$OUT/meta.json") ||
-  die "cannot read the deploy meta $OUT/meta.json - re-run make ARCH=riscv64-nemu deploy"
+  die "cannot read the deploy meta $OUT/meta.json - re-run make ARCH=$LANE deploy"
 [ "$live_image_sha" = "$deploy_image_sha" ] ||
-  die "the image at $OUT/fw_payload.bin (sha256 $live_image_sha) does not match its deploy meta ($OUT/meta.json records ${deploy_image_sha:-nothing}) - re-run make ARCH=riscv64-nemu deploy"
+  die "the image at $OUT/fw_payload.bin (sha256 $live_image_sha) does not match its deploy meta ($OUT/meta.json records ${deploy_image_sha:-nothing}) - re-run make ARCH=$LANE deploy"
 export OUT
+# The venue re-sources env.sh; its := defaults preserve the exported pins, so
+# the boot uses exactly the interpreter this wrapper preflighted.
+export NEMU_DIR NEMU_BIN NEMU_COMMIT
 
 mkdir -p "$LANE_DIR"
 RUNS="$OUT/runs"
@@ -126,7 +156,7 @@ SNAP="$LANE_DIR/runs.snapshot"
 [ -d "$RUNS" ] && find "$RUNS" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort > "$SNAP"
 RUN_DIR=""
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-DEST="$RESULTS_DIR/riscv64-nemu/$STAMP"
+DEST="$RESULTS_DIR/$LANE/$STAMP"
 
 new_run_dirs() { # names of the run dirs created since the snapshot
   local d name
@@ -190,11 +220,13 @@ cleanup() {
       cp -f "$RUN_DIR/meta.json" "$DEST/"
       cp -f "$OUT/meta.json" "$DEST/meta.deploy.json"
     fi
-    ENABLE_FLAG="" RUN_STATUS="$rc" bash scripts/common/version_stamp.sh riscv64-nemu "$DEST/versions.txt"
+    ENABLE_FLAG="${ENABLE_FLAG:-}" RUN_STATUS="$rc" \
+      bash scripts/common/version_stamp.sh "$LANE" "$DEST/versions.txt"
     nemu_bin_path=$(realpath "$NEMU_BIN" 2>/dev/null || printf '%s\n' "$NEMU_BIN")
     {
       echo "# nemu"
       echo "nemu-bin: $nemu_bin_path"
+      echo "nemu-pin: $NEMU_PIN"
       echo "nemu-commit: $(git -C "$NEMU_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
       echo "nemu-describe: $(git -C "$NEMU_DIR" describe --always --dirty 2>/dev/null || echo unknown)"
       echo "nemu-sha256: $(sha256sum "$NEMU_BIN" 2>/dev/null | cut -d' ' -f1 || echo unknown)"
@@ -213,8 +245,20 @@ cleanup() {
     fi
     echo "collected riscv64-nemu lane artifacts into $DEST"
   fi
-  make -C benchmark clean >/dev/null 2>&1
+  # The venue builds its guest scheduler inside the tracked submodule, so this
+  # clean is what removes a RISC-V benchmark/run-test.  The recipe inherits the
+  # lane's MAKEFLAGS (ARCH plus the class flag), which the bench Makefile's own
+  # guard refuses; drop those names here (stage_corpus.sh's discipline) and let
+  # a failing clean fail the lane - the error text is the diagnosis.
   assert_rc=0
+  if ! env -u MAKEFLAGS -u MFLAGS -u ARCH -u enable_riscv64_cfi make -C benchmark clean; then
+    echo "ERROR: 'make -C benchmark clean' failed - the submodule may still carry generated artifacts" >&2
+    assert_rc=1
+  fi
+  if [ -e benchmark/run-test ]; then
+    echo "ERROR: generated benchmark/run-test survived the clean (a following host lane would run it under binfmt)" >&2
+    assert_rc=1
+  fi
   # A failing git is not a clean tree; only rc 0 with empty output means clean.
   dirty=$(git -C benchmark status --short)
   git_rc=$?

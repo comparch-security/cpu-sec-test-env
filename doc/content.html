@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="last-modified" content="2026-10-31">
+    <meta name="last-modified" content="2026-11-19">
     <title>Documentation | cpu-sec-test-env</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -56,16 +56,31 @@
             </tr>
             <tr>
                 <td><code>riscv64</code></td>
-                <td>Linux 6.18.56 guest under <code>qemu-system-riscv64</code>
-                    (<code>-M virt</code>); results extracted over a virtio-9p share</td>
+                <td>Linux 7.3.4 guest under <code>qemu-system-riscv64</code>
+                    (<code>-M virt</code>) on the built OpenSBI v1.9 firmware;
+                    results extracted over a virtio-9p share</td>
                 <td><code>results/riscv64/&lt;stamp&gt;/</code></td>
             </tr>
             <tr>
+                <td><code>riscv64-cfi</code></td>
+                <td>The armed variant of <code>riscv64</code>: the bench's RISC-V
+                    ISA-CFI build class (GCC 16) on a CFI-advertising CPU
+                    (<code>rva23s64,zicfiss=on,zicfilp=on</code>)</td>
+                <td><code>results/riscv64-cfi/&lt;stamp&gt;/</code></td>
+            </tr>
+            <tr>
                 <td><code>riscv64-nemu</code></td>
-                <td>Linux 6.18.56 guest interpreted by the workspace's XiangShan
+                <td>Linux 7.3.4 guest interpreted by the workspace's XiangShan
                     NEMU; the corpus and the riscv64 scheduler run inside it and
                     results are parsed from the guest console</td>
                 <td><code>results/riscv64-nemu/&lt;stamp&gt;/</code></td>
+            </tr>
+            <tr>
+                <td><code>riscv64-nemu-cfi</code></td>
+                <td>The armed variant of <code>riscv64-nemu</code>: the CFI build
+                    class on the CFI-verified NEMU checkout, with a venue DTS that
+                    advertises Zicfilp/Zicfiss</td>
+                <td><code>results/riscv64-nemu-cfi/&lt;stamp&gt;/</code></td>
             </tr>
             <tr>
                 <td><code>cheri_riscv64</code></td>
