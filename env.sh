@@ -6,10 +6,22 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-# 182652b is bench cycle 3's class-gap commit, completing the stack-offset
-# calibration: 216da4ee had tried to capture the call's return site from `ra`
-# after the call, but the helper has already scanned by then and the value was
-# dead -- the armed class still matched nothing and exited 2 on the NEMU lane.
+# 92f7deb is bench cycle 4's registry amendment, "Declare the armed CFI class's
+# observed qemu outcomes in the registry": 25 `expect-results` declarations
+# (plus four row comments) record what the armed RISC-V ISA-CFI class actually
+# does under qemu -- the calibration chain's SEGV_CPERR exit 30, the corruption
+# families' diagnostic deaths (260/267 and raw wild-return exit statuses) and
+# the rows that collapse to a declared not-demonstrated code -- each stated as
+# a qemu-platform observation, never as CFI delivery, with the qemu-vs-NEMU
+# divergence left under adjudication.  The delta is registry-only (its plans/
+# archive files alongside): no scheduler, test or source change, so the
+# scheduler's collapse rule (0 wins, else the smallest declared code, else the
+# smallest observed) leaves every lane's recorded code identical to 182652b's.
+# Beneath it, 182652b is bench cycle 3's class-gap commit, completing the
+# stack-offset calibration: 216da4ee had tried to capture the call's return
+# site from `ra` after the call, but the helper has already scanned by then
+# and the value was dead -- the armed class still matched nothing and exited 2
+# on the NEMU lane.
 # 182652b anchors a link-time symbol in the instruction slot the call returns
 # to (`lpad 0` plus the 4-byte label alignment makes the label itself the wrong
 # address), so the helper receives the true return site.  216da4ee also declares
@@ -35,7 +47,7 @@
 # (f4c916a), the scheduler's corpus mode (a09f570) and the opcode-extraction
 # fix (74195c4).  The tracked registry is never swapped, so the submodule stays
 # clean through a deploy and any dirt in it is a real edit.
-BENCH_COMMIT=182652b7efaadca7900beb3ce2a74ec3282e2565
+BENCH_COMMIT=92f7deb5b20c4ecc2910529d94eca3a5e14b97ee
 
 # Every lane run's preflight: `git -C benchmark status --short` must be empty
 # (the deploy legs, the run legs and each lane's post-clean assert all read
