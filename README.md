@@ -306,7 +306,7 @@ All pins live in `env.sh` only — no script hard-codes them.
 
 | Item | Pin |
 |---|---|
-| bench commit | `92f7deb5b20c4ecc2910529d94eca3a5e14b97ee` — bench cycle 4's registry amendment, "Declare the armed CFI class's observed qemu outcomes in the registry": 25 `expect-results` declarations record what the armed RISC-V ISA-CFI class does under qemu (the calibration chain's SEGV_CPERR exit 30, the corruption families' diagnostic deaths, the rows that collapse to a declared not-demonstrated code), each stated as a qemu-platform observation, never as CFI delivery, with the qemu-vs-NEMU divergence left under adjudication. The delta is registry-only (its plan-archive files ride along): no scheduler, test or source change, so the scheduler's collapse rule leaves every lane's recorded code identical to `182652b`'s. Beneath it, `182652b` is bench cycle 3's class-gap commit: `216da4ee` fixed the CFI-class stack-offset calibration and declared the armed class's allocator aborts, `182652b` anchored that calibration at the call's return site (`lpad 0` plus 4-byte label alignment defeats a label-address scan), and its parent `2aaf895` fixed the Zicfiss self-arm lock argument (the RISC-V `PR_LOCK_SHADOW_STACK_STATUS` takes `0`). Beneath them `cbe3bf9` made the benchmark a portable core: the embedded venue (`platform/riscv64-nemu-linux/`) is gone (this repository stages every system lane's corpus itself and carries the NEMU venue package), and the CHERI/Morello build skips are declared in the tracked registry, whose `skip` rows name the arch token a record does not build on and its cause (the Morello build bakes a distinct token, so its rows cannot collide with the healthy aarch64 lanes). All nine executable lanes carry stamps at this pin (2026-11-19 re-stamp); the two CHERI lanes keep their previous-pin stamps and are excluded from the pin-uniform comparison by design |
+| bench commit | `eb191329a4cbb9100c63b826ef3966d7015ed9d8` — the correctness batch `9645e57` ("Fix five correctness deferrals: sentinel UB, dangling requires, stale declarations, redzone publication") plus its adjudication amendment `eb19132` ("Declare the armed-qemu peer-func outcome structural; open the residue set"). The batch restores four `int rv = 1;` sentinels and eight dangling require references, replaces `acc-check-IBT`'s impossible 290 with the observed 99, declares `mts-write-after-free-stack`'s residue space, and makes the redzone calibration publish the matched alignment distance (`rewrite_temp_file` plus the case's match-arm rewrite) — whose behavioural evidence is this repository's 2026-11-20 re-stamp, where the published values certified unchanged on this host. The amendment retracts the qemu-side claim on `cfi-return-to-peer-func` — on qemu the g1 calibration is itself caught and publishes nothing, so the case exits 1 before staging its attack and the prior 30 was an accidental exit-path fault of the old layout (30 stays scoped to the NEMU lane, where the calibration publishes; the qemu-vs-NEMU divergence record stands) — and restates the residue set open-ended, with 120 joining 136/200/248. Beneath them, `92f7deb` is bench cycle 4's registry amendment, "Declare the armed CFI class's observed qemu outcomes in the registry": 25 `expect-results` declarations record what the armed RISC-V ISA-CFI class does under qemu (the calibration chain's SEGV_CPERR exit 30, the corruption families' diagnostic deaths, the rows that collapse to a declared not-demonstrated code), each stated as a qemu-platform observation, never as CFI delivery, with the qemu-vs-NEMU divergence left under adjudication. That delta is registry-only (its plan-archive files ride along): no scheduler, test or source change, so the scheduler's collapse rule leaves every lane's recorded code identical to `182652b`'s. Beneath it, `182652b` is bench cycle 3's class-gap commit: `216da4ee` fixed the CFI-class stack-offset calibration and declared the armed class's allocator aborts, `182652b` anchored that calibration at the call's return site (`lpad 0` plus 4-byte label alignment defeats a label-address scan), and its parent `2aaf895` fixed the Zicfiss self-arm lock argument (the RISC-V `PR_LOCK_SHADOW_STACK_STATUS` takes `0`). Beneath them `cbe3bf9` made the benchmark a portable core: the embedded venue (`platform/riscv64-nemu-linux/`) is gone (this repository stages every system lane's corpus itself and carries the NEMU venue package), and the CHERI/Morello build skips are declared in the tracked registry, whose `skip` rows name the arch token a record does not build on and its cause (the Morello build bakes a distinct token, so its rows cannot collide with the healthy aarch64 lanes). All nine executable lanes carry stamps at this pin (2026-11-20 re-stamp); the two CHERI lanes keep their previous-pin stamps and are excluded from the pin-uniform comparison by design |
 | NEMU | `../NEMU` @ `ae1ec3cd869b9c5e1783af691538d5c26f37ee55` — the workspace checkout; `NEMU_DIR`/`NEMU_BIN` are a relative-default pair, and the binary's sha256 is recorded and compared run-to-run, **not** pinned |
 | NEMU-cfi | `../NEMU-cfi` @ `668eb688a7478fa8863220d8f81033ed786f6bb9` (NEMU master plus the Zicfiss/Zicfilp implementation, CFI-verified by the workspace's research cycles) — the `riscv64-nemu-cfi` lane's interpreter; `NEMU_CFI_DIR`/`NEMU_CFI_BIN` are a relative-default pair and the binary's sha256 **is** pinned (`NEMU_CFI_BIN_SHA256`) |
 | NEMU venue inputs | workload-builder `b7c321dec6ad6f4c78abcaefc722b59b4043503c`, OpenSBI `cbf9f6734dd85a982c63e3cb5db7ffe09da839ca`, LibCheckpointAlpha `5169da768d18f4682a489eaabe7c071df6d6ef88` — the absorbed image builder's upstream sources, one pin per input in `env.sh` |
@@ -531,29 +531,34 @@ corpus without adding isolation first.
   those eras; the lane-comparison snapshot is the measure-on-demand record of
   how the nine lanes classify at the current pin.
 - **The armed class's qemu outcomes are declared at the current pin; one
-  wild-death row stays out-of-expect by nature.** Every corpus
+  wild-death row is declared open-ended.** Every corpus
   binary of the CFI class arms a shadow stack at startup, so the armed lanes
   legitimately move records outside their plain-lane declared sets — at the
   previous pin those movements were all undeclared gate findings; the bench's
-  registry amendment (`92f7deb`) declares the armed class's observed qemu
+  registry amendments (`92f7deb`, refined by `eb19132`) declare the armed
+  class's observed qemu
   outcomes, so the qemu variant's calibration and memory-corruption deaths
   (codes 30, 260/267/262/216/192/184/136) now classify `declared`. The
-  declared-30 delivery stays partial by platform — the ACC calibration chain
-  that publishes the stack offsets is itself caught on qemu, so the qemu
-  variant stages only a few of its declared-30 attacks while the NEMU variant
-  delivers most of them — and that delivery gap remains a
-  registry/attack-staging question owned by the
-  bench repo (a deferred issue carries it; each stamp's `results.json` is the
-  measure-on-demand record). The one exception: the qemu
+  declared-30 delivery is partial by platform and adjudicated structural at
+  `eb19132`: on qemu the ACC calibration chain that would publish the stack
+  offsets is itself caught and publishes nothing, so
+  `cfi-return-to-peer-func` exits 1 before staging its attack — its earlier
+  30 was an accidental exit-path fault of the old layout and is retracted —
+  leaving the qemu variant one declared-30 delivery
+  (`cfi-return-to-peer-asmfunc`) where the NEMU variant delivers most of its
+  declared-30 attacks. That delivery gap remains a qemu-vs-NEMU divergence
+  question for the NEMU CFI research adjudication (each stamp's
+  `results.json` is the measure-on-demand record). The qemu
   variant's `mts-write-after-free-stack` exits with a residue-dependent raw
   status (a wild-return path carrying register residue — its observed values
-  across stamps are 200, 136 and 248, varying independent of the bench pin),
-  and the registry declares a single value for it, so whatever value a run
-  brings home can land outside the declaration; the 2026-11-19 re-stamp caught
-  exactly that (248 where the previous stamp held 136). Treat that record as a
-  known-jitter exception in gate output, owned by the same bench-side deferral —
-  not as an env-side defect. The env-side arming chain itself is green
-  on both lanes: platform advertisement, OpenSBI v1.9 FWFT, kernel
+  across stamps are 120, 136, 200 and 248, varying independent of the bench
+  pin), and the registry restates its value space open-ended (`eb19132`), so
+  any residue value a run brings home scores `declared`; a genuinely new
+  value would be a one-line bench amendment (the 2026-11-20 re-stamp caught
+  120 exactly this way and the bench declared it). Treat that record as a
+  known-jitter exception in gate output, owned by the same bench-side
+  deferral — not as an env-side defect. The env-side arming chain itself is
+  green on both lanes: platform advertisement, OpenSBI v1.9 FWFT, kernel
   `CONFIG_RISCV_USER_CFI`, the self-arm blob's lock and `ssrdp` readback, and the
   GCC 16 corpus all verify. Compare the armed lanes against each other and
   against their plain counterparts, never as a pass/fail gate against the
@@ -565,7 +570,12 @@ corpus without adding isolation first.
   rejection code at one stamp and its generic illegal-call code at the next —
   both codes are declared for the record, so the gate scores it `declared`
   either way, but a code-identity comparison against an older stamp can flag
-  it. The scheduler's collapse rule cannot absorb this: the movers are
+  it. The 2026-11-20 re-stamp fixed that record's baseline on the PAuth
+  rejection (19): every stamp except the 2026-11-19 one carries it, all four
+  runs at the current pin reproduce it with identical calibration inputs, and
+  the one generic-exception stamp is adjudicated the one-off draw (the aarch64
+  lanes pin no ASLR). The scheduler's collapse rule cannot absorb this: the
+  movers are
   single-run records whose value comes from the death path itself, not from a
   chosen observation. Compare stamps on the gate's classification (per-record
   `clean`/`declared`/out-of-expect), not on raw code equality.

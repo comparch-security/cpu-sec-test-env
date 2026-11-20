@@ -6,8 +6,37 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-# 92f7deb is bench cycle 4's registry amendment, "Declare the armed CFI class's
-# observed qemu outcomes in the registry": 25 `expect-results` declarations
+# eb19132 is the adjudication amendment over the correctness batch beneath,
+# "Declare the armed-qemu peer-func outcome structural; open the residue set":
+# the restamp surfaced that `cfi-return-to-peer-func`'s qemu-side attack was
+# never staged -- the g1 calibration is itself caught (exit 30) and publishes
+# nothing, the scheduler's `-v` fallback passes the literal token, and the case
+# returns 1 before `helper()` corrupts anything -- so the prior 30 is retracted
+# as an accidental exit-path fault of the earlier layout's instrumented frames
+# and scoped to the NEMU lane, where the calibration publishes (the retracted
+# 30's firing site is the env follow-up's in-guest probe).  The known-jitter
+# record's wild-return status is restated open-ended, 120 joining 136/200/248
+# under one shared text, so the env side treats it exception-class: a newly
+# observed raw value is recorded, never a stop.  The bench CLAUDE.md gains the
+# lib-batch canary rule -- a source-level neutrality claim needs a one-run
+# armed-lane canary before a consuming env cycle plans its re-stamp.  The delta
+# is registry-only plus that guidance note: no scheduler, test or source change.
+# Beneath it, 9645e57 is the correctness-deferral batch, "Fix five correctness
+# deferrals: sentinel UB, dangling requires, stale declarations, redzone
+# publication": the four mss out-of-range rv sentinels initialised to the
+# shared 1; the eight dangling require references restored after the 1afd435
+# renames (fast-run regains the eight records it could never gate);
+# `acc-check-IBT`'s impossible 290 removed in favour of the observed
+# aarch64-mte HWASan 99;
+# `mts-write-after-free-stack`'s residue space declared as {99, 136, 200, 248};
+# and the calibration's match arm (`rewrite_temp_file`, trunc) publishing the
+# matched redzone alignment distance.  Four of the five are delivery- and
+# gate-neutral; only the redzone publication is code-moving, and only for its
+# 20 dependent records - it changes which offset they attack, so its
+# behavioural evidence is this environment's re-stamp at the pin.
+# Beneath it, 92f7deb is bench cycle 4's registry amendment, "Declare the
+# armed CFI class's observed qemu outcomes in the registry": 25 `expect-results`
+# declarations
 # (plus four row comments) record what the armed RISC-V ISA-CFI class actually
 # does under qemu -- the calibration chain's SEGV_CPERR exit 30, the corruption
 # families' diagnostic deaths (260/267 and raw wild-return exit statuses) and
@@ -47,7 +76,7 @@
 # (f4c916a), the scheduler's corpus mode (a09f570) and the opcode-extraction
 # fix (74195c4).  The tracked registry is never swapped, so the submodule stays
 # clean through a deploy and any dirt in it is a real edit.
-BENCH_COMMIT=92f7deb5b20c4ecc2910529d94eca3a5e14b97ee
+BENCH_COMMIT=eb191329a4cbb9100c63b826ef3966d7015ed9d8
 
 # Every lane run's preflight: `git -C benchmark status --short` must be empty
 # (the deploy legs, the run legs and each lane's post-clean assert all read

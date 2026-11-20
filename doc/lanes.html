@@ -249,15 +249,20 @@
             edge, <code>sspopchk</code>) and 31 (forward edge, landing pad).
         </p>
         <p>
-            Provisional results are the class's own: arming changes the corpus-wide
+            Provisional results are the class's own, adjudicated at bench
+            <code>eb19132</code> (2026-11-20): arming changes the corpus-wide
             outcome, not only the <code>cfi-return-*</code> family — the qemu
-            variant's stack-offset calibrators are themselves caught, so its
-            declared-30 rows mostly report the "not demonstrated" code, while the
-            NEMU variant completes more of them. The two variants stage
-            byte-identical corpus binaries and still diverge; the registry and
-            attack-staging questions are owned by the bench repo (a deferred issue
-            carries them), so the armed lanes are read against each other and
-            against their plain counterparts, never as a pass/fail gate.
+            variant's stack-offset calibrators are themselves caught and publish
+            nothing, so <code>cfi-return-to-peer-func</code> exits before staging
+            its attack (code 1; its earlier 30 was an accidental exit-path fault
+            of the old layout, retracted) and the qemu variant keeps one
+            declared-30 delivery (<code>cfi-return-to-peer-asmfunc</code>) where
+            the NEMU variant delivers most of its declared-30 rows. The two
+            variants stage byte-identical corpus binaries and still diverge; that
+            qemu-vs-NEMU divergence is the remaining open question, owned by the
+            NEMU CFI research adjudication, so the armed lanes are read against
+            each other and against their plain counterparts, never as a
+            pass/fail gate.
         </p>
 
         <h2>riscv64-nemu</h2>
