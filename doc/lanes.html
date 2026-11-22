@@ -46,7 +46,7 @@
                 <td><code>riscv64</code></td>
                 <td>riscv64</td>
                 <td>System qemu guest; results over virtio-9p</td>
-                <td><code>qemu-system-riscv</code> + <code>qemu-system-data</code>, cross gcc-13</td>
+                <td>source-built qemu 11.1.3 (<code>build/qemu-11.1.3/</code>; virtfs enabled), cross gcc-13</td>
             </tr>
             <tr>
                 <td><code>riscv64-nemu</code></td>
@@ -213,6 +213,41 @@
             the staged corpus and copies its results back. There is no
             console parsing and no <code>dump</code> target: the binaries live
             inside the guest image.
+        </p>
+        <p>
+            <strong>The emulator is source-built, and the pin is split.</strong>
+            Since the 2026-11-22 pin both riscv64-family qemu lanes execute a
+            one-time source build of QEMU 11.1.3
+            (<code>QEMU_SYSTEM_RISCV64=build/qemu-11.1.3/build/qemu-system-riscv64</code>,
+            <code>QEMU_PIN_VERSION_RISCV64=11.1.3</code>), not the distro
+            package. Why: QEMU &le;11.1.0's RISC-V translator skipped the
+            PC-sync on every <em>successful</em> <code>sspopchk</code> under
+            CF_PCREL (upstream #4118, fixed by <code>6187f92</code>, first
+            carried by 11.1.1), poisoning the translation block's
+            <code>pc_save</code> and derailing later PC-relative targets — the
+            defect that produced the entire qemu-side half of the armed class's
+            qemu&harr;NEMU divergence (healed and adjudicated 2026-11-22; see
+            the workspace research note). The distro 10.2.1 package can never
+            receive that fix, and the defect is riscv-translator-only, so
+            <code>qemu-aarch64</code> stays on the distro binary
+            (<code>QEMU_PIN_VERSION=10.2.1</code> — the aarch64 family's own
+            pin). The built binary's sha256 is recorded per stamp (the stamp's
+            <code># emulator</code> section: path, <code>--version</code>
+            line, <code>qemu-sha256:</code>) and compared run-to-run, never
+            pinned — build paths embed. The tarball is sha256-pinned in
+            <code>env.sh</code>'s provenance comment and the dtc wrap is staged
+            offline. <strong>virtfs/9p is a hard build requirement</strong>:
+            both lanes' results ride a virtio-9p share with no fallback, and
+            <code>--without-default-features</code> silently disables the auto
+            <code>attr</code> option the virtfs gate needs (the configure then
+            dies with a misleading &ldquo;requires libattr-devel&rdquo;
+            message) — a rebuild therefore carries
+            <code>--enable-virtfs --enable-attr</code>, and the cycle's
+            capability gate (<code>CONFIG_VIRTFS</code> define, the
+            <code>CONFIG_FSDEV_9P</code>-gated <code>fsdev_qemu-fsdev.c.o</code>
+            object, <code>-device help</code> listing
+            <code>virtio-9p-device</code>) keeps a silently virtfs-less build
+            from ever passing.
         </p>
 
         <h2>riscv64-cfi, riscv64-nemu-cfi — the armed variants</h2>

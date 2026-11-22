@@ -161,10 +161,25 @@ AARCH64_SYSROOT=/usr/aarch64-linux-gnu
 # a banner print (21 void stamps, 2026-10-13..24, derived from the `# LIBC:`
 # banner census).  This pin is consumed by scripts/aarch64/prepare.sh's version
 # assertion only - never export it.
+# The aarch64 pin stays on the distro qemu-user binary (the aarch64 lanes via
+# binfmt) and is untouched by the riscv64 source-build split below.
 QEMU_PIN_VERSION=10.2.1
-QEMU_SYSTEM_RISCV64=qemu-system-riscv64
+# The riscv64 system lanes' source-built qemu.  qemu <=11.1.0's riscv
+# translator skips the PC-sync on trans_sspopchk's success path (upstream #4118,
+# fixed by 6187f92, first carried by release 11.1.1) - under CF_PCREL a matching
+# sspopchk poisons pc_save for the TB and corrupts later PC-relative targets -
+# so no distro point update can carry the fix.  Built once per this pin from the
+# release tarball (sha256
+# 5a8289c7940dc77d3873c81a6c29ba3afe1446fc9d36e77fa1658cdbecb84b22) into
+# build/qemu-11.1.3/ with the recipe's `--enable-virtfs --enable-attr` (both
+# lanes hard-require the 9p share).  The built binary's sha256 is recorded per
+# stamp in the `# emulator` section and compared run-to-run, never pinned -
+# build paths embed.  Repo-relative like the other generated-tree pins.
+QEMU_PIN_VERSION_RISCV64=11.1.3
+QEMU_SYSTEM_RISCV64=build/qemu-11.1.3/build/qemu-system-riscv64
 QEMU_AARCH64=qemu-aarch64
-# rva23s64: qemu 10.2.1's named RVA23 Linux-capable hart profile.  Ubuntu's
+# rva23s64: qemu's named RVA23 Linux-capable hart profile (present across the
+# distro and the source-built riscv64 binary).  Ubuntu's
 # riscv64 cross glibc is built to the RVA23U64 profile (crt1.o/libc.so.6 carry
 # that Tag_RISCV_arch and the linker unions input tags), so every executable
 # this toolchain links declares RVA23U64 - a narrower model (rv64) is a latent

@@ -67,12 +67,33 @@ sudo apt install qemu-system-riscv qemu-system-data qemu-user qemu-user-binfmt \
                  libhwasan0-arm64-cross
 ```
 
-- `qemu-system-riscv` / `qemu-system-data` (10.2.1) — the riscv64 lanes'
-  emulator. The lanes boot the `fw_jump.bin` built from the pinned OpenSBI, so
+- `qemu-system-riscv` / `qemu-system-data` (10.2.1) — host-package provenance
+  for the riscv64 lanes only: since the 2026-11-22 pin those lanes execute the
+  source-built QEMU 11.1.3 (next bullet), so the distro packages are executed
+  by no lane any more; they stay in this list and in every stamp's package
+  record as host provenance. The lanes boot the `fw_jump.bin` built from the
+  pinned OpenSBI, so
   `qemu-system-data`'s bundled blobs are no longer the lane's firmware source;
   the riscv64 guest kernel is built with the GCC 16.1.0 toolchain below, because
   its `CONFIG_RISCV_USER_CFI` Kconfig gate is a `cc-option` probe that gcc-13
   fails (the symbol then vanishes silently).
+- The riscv64 lanes' emulator is a **one-time source build** of QEMU 11.1.3
+  into `build/qemu-11.1.3/` (see Pins → QEMU). Configure
+  `--target-list=riscv64-softmmu --without-default-features
+  --enable-fdt=internal --disable-werror --enable-virtfs --enable-attr` and
+  `ninja build/qemu-system-riscv64`; the release tarball is sha256-pinned in
+  `env.sh`'s provenance comment (staged in `build/downloads/`), and the dtc
+  wrap must be staged offline (copy the `subprojects/dtc` checkout from a
+  verified extraction — meson would otherwise fetch it). **virtfs/9p is a hard
+  requirement**: both riscv64 lanes extract their results over a virtio-9p
+  share and have no fallback path, and `--without-default-features` silently
+  disables the auto `attr` option the virtfs gate requires (the configure then
+  dies with a misleading "requires libattr-devel" message — the headers are
+  not the problem), so both feature flags are mandatory. The cycle's
+  capability gate (config-host.h `CONFIG_VIRTFS` define, the
+  `CONFIG_FSDEV_9P`-gated `fsdev_qemu-fsdev.c.o` object, `-device help`
+  listing `virtio-9p-device`) keeps a silently virtfs-less build from ever
+  passing.
 - `qemu-user` + `qemu-user-binfmt` (10.2.1) — the aarch64 lane's execution path:
   every aarch64 ELF runs under `qemu-aarch64` via the kernel's binfmt handler
   (registering that handler is root-only, which is why it is in this list).
@@ -313,7 +334,8 @@ All pins live in `env.sh` only — no script hard-codes them.
 | riscv64 toolchain | `riscv64-linux-gnu-{g++-13,gcc-13,as,objdump}` (Ubuntu gcc-13 cross 13.4.0) — the plain lanes |
 | riscv64 CFI toolchain | `riscv64-unknown-linux-gnu-{gcc,g++,as,objdump}` (GCC 16.1.0, `RISCV64_GNU_PREFIX=../riscv/bin/…`) — the guest kernel and the two CFI variant lanes |
 | aarch64 toolchain / sysroot | `aarch64-linux-gnu-{g++-13,gcc-13,as,objdump}`, `/usr/aarch64-linux-gnu` |
-| QEMU | 10.2.1 (`qemu-system-riscv64`, `qemu-aarch64`) |
+| QEMU (riscv64 system lanes) | source-built **11.1.3** — `QEMU_PIN_VERSION_RISCV64=11.1.3`, `QEMU_SYSTEM_RISCV64=build/qemu-11.1.3/build/qemu-system-riscv64`. Built once from the release tarball (sha256-pinned in `env.sh`'s provenance comment) with `--enable-virtfs --enable-attr` (virtfs/9p is a hard requirement of the lanes' result extraction — see Prerequisites). The binary's sha256 is recorded per stamp (the stamp's `# emulator` section) and compared run-to-run, **not** pinned — build paths embed. Why source-built: QEMU ≤11.1.0's RISC-V translator poisons the translation block's `pc_save` on every *successful* `sspopchk` under CF_PCREL (upstream #4118, fixed by `6187f92`, first carried by 11.1.1), and the distro 10.2.1 package can never receive the fix — the defect produced the entire qemu-side half of the armed class's qemu↔NEMU divergence (see *Known caveats*). Why the split: the defect is riscv-translator-only, so `qemu-aarch64` is untouched and the aarch64 family stays on the distro binary |
+| QEMU (aarch64 family) | distro 10.2.1 (`qemu-aarch64` via the qemu-user packages; `QEMU_PIN_VERSION`) — unchanged by the riscv64 pin split |
 | QEMU CPU models | riscv64 `rva23s64` (`-M virt`, 256 MiB, the built `build/riscv64/fw_jump.bin`); `riscv64-cfi` `rva23s64,zicfiss=on,zicfilp=on` (RVA23 does not include the CFI extensions, and QEMU only advertises them as opt-in properties — measured: the base profile emits a guest DT with zero `zicfiss`/`zicfilp` hits, the property form two); the aarch64 `pa`, `bti` and `mte` lanes each request `QEMU_CPU=max` (under three per-lane names in `env.sh`) — the venue's default model **plus** PAuth (`max` is *not* the default: left unset, this `qemu-aarch64` behaves as `max,pauth=off`, byte-identical HWCAP). The `pa` request is load-bearing (its `retaa` epilogue SIGILLs without FEAT_PAuth) and so is the `bti` request at this pin (the bti class's `-march=armv8.5-a` implies PAuth, and the bench's `STRIP_PAC()` compiles to `xpaci`, which traps without FEAT_PAuth) — see *Known caveats* |
 | riscv64 firmware | OpenSBI v1.9 `cbf9f6734dd85a982c63e3cb5db7ffe09da839ca`, built as a generic `fw_jump` into `build/riscv64/fw_jump.bin` and booted by both riscv64 lanes — it advertises the SBI FWFT LANDING_PAD + SHADOW_STACK features user-mode CFI needs, which QEMU's bundled firmware does not |
 | guest kernel | Linux 7.3.4 (kernel.org tarball, sha256-verified) — the 7.x line is the first with `CONFIG_RISCV_USER_CFI`; one lane-agnostic config serves all four riscv64-family lanes |
@@ -438,8 +460,9 @@ corpus without adding isolation first.
   so *every* executable this toolchain links declares RVA23U64, whatever
   `-march` the bench compiles with. A narrower qemu model (e.g. `rv64`, the
   lane's original pin) would be a latent illegal-instruction inside the guest's
-  own libc. The lane therefore pins `-cpu rva23s64` (qemu 10.2.1's named
-  Linux-capable profile model), and the deploy asserts both that pin and that
+  own libc. The lane therefore pins `-cpu rva23s64` (the named
+  Linux-capable RVA23 profile model, present at both the distro 10.2.1 and
+  the source-built 11.1.3 qemu), and the deploy asserts both that pin and that
   no staged ELF's tag exceeds the toolchain's own `crt1.o` baseline.
   The same argument applies to the **guest kernel**: it must support userspace
   vector (RISC-V V landed in Linux 6.5 — the original 6.1.83 pin had no
@@ -530,34 +553,34 @@ corpus without adding isolation first.
   explicitly dated to
   those eras; the lane-comparison snapshot is the measure-on-demand record of
   how the nine lanes classify at the current pin.
-- **The armed class's qemu outcomes are declared at the current pin; one
-  wild-death row is declared open-ended.** Every corpus
+- **The armed class's qemu-side profile was a QEMU translator defect and is
+  healed at the 2026-11-22 pin.** Every corpus
   binary of the CFI class arms a shadow stack at startup, so the armed lanes
-  legitimately move records outside their plain-lane declared sets — at the
-  previous pin those movements were all undeclared gate findings; the bench's
-  registry amendments (`92f7deb`, refined by `eb19132`) declare the armed
-  class's observed qemu
-  outcomes, so the qemu variant's calibration and memory-corruption deaths
-  (codes 30, 260/267/262/216/192/184/136) now classify `declared`. The
-  declared-30 delivery is partial by platform and adjudicated structural at
-  `eb19132`: on qemu the ACC calibration chain that would publish the stack
-  offsets is itself caught and publishes nothing, so
-  `cfi-return-to-peer-func` exits 1 before staging its attack — its earlier
-  30 was an accidental exit-path fault of the old layout and is retracted —
-  leaving the qemu variant one declared-30 delivery
-  (`cfi-return-to-peer-asmfunc`) where the NEMU variant delivers most of its
-  declared-30 attacks. That delivery gap remains a qemu-vs-NEMU divergence
-  question for the NEMU CFI research adjudication (each stamp's
-  `results.json` is the measure-on-demand record). The qemu
-  variant's `mts-write-after-free-stack` exits with a residue-dependent raw
-  status (a wild-return path carrying register residue — its observed values
-  across stamps are 120, 136, 200 and 248, varying independent of the bench
-  pin), and the registry restates its value space open-ended (`eb19132`), so
-  any residue value a run brings home scores `declared`; a genuinely new
-  value would be a one-line bench amendment (the 2026-11-20 re-stamp caught
-  120 exactly this way and the bench declared it). Treat that record as a
-  known-jitter exception in gate output, owned by the same bench-side
-  deferral — not as an env-side defect. The env-side arming chain itself is
+  legitimately move records outside their plain-lane declared sets. The qemu
+  variant's defect-era profile — calibrators caught with 30, backward-edge
+  rows stuck at their not-demonstrated codes, the wild-death families
+  (260/267/262/216/192/184/136) — is adjudicated (2026-11-22,
+  `tmp/research/nemu-divergence-adjudication-2026-11-20.md`) as artifacts of
+  QEMU ≤11.1.0's RISC-V translator defect (`trans_sspopchk` skipping the
+  PC-sync on the success path under CF_PCREL; upstream #4118, fixed by
+  `6187f92`): a successful sspopchk left the translation block's `pc_save`
+  stale and derailed every later PC-relative target, so benign calibration
+  chains were genuinely caught and corrupted control flow died wild before any
+  epilogue check ran. The source-built 11.1.3 (Pins → QEMU) carries the fix,
+  and the healed restamp reproduced the adjudicated prediction
+  record-for-record: the calibration publishes the same stack values the NEMU
+  variant publishes, the declared-30 backward-edge rows deliver on the rows
+  whose attacks stage, the wild-death rows complete benignly, and the armed
+  lanes' recorded codes became identical (next bullet). The bench registry
+  still carries the defect-era qemu declarations (`92f7deb`/`eb19132`), which
+  are now stale-but-classifying — every healed code is either clean-0 or
+  already declared, so the gate stays green while the bench-side realignment
+  cycle (the reverse of `92f7deb`) retires or relabels those declarations
+  against this cycle's declaration delta
+  (`tmp/verification/2026-11-22-env-qemu-1113-gate.json`). The
+  `mts-write-after-free-stack` open-ended residue allowance stays
+  (exception-class: a raw residue value is recorded, never a stop), even
+  though the healed pin landed a benign completion. The env-side arming chain itself is
   green on both lanes: platform advertisement, OpenSBI v1.9 FWFT, kernel
   `CONFIG_RISCV_USER_CFI`, the self-arm blob's lock and `ssrdp` readback, and the
   GCC 16 corpus all verify. Compare the armed lanes against each other and
@@ -565,7 +588,9 @@ corpus without adding isolation first.
   seven-lane baseline.
 - **Recorded codes are not universally stable run-to-run.** Two records are
   measured movers: the qemu armed variant's `mts-write-after-free-stack` (the
-  residue exit status above) and the aarch64 `pa` lane's
+  residue exit status above — a benign completion at the healed 2026-11-22
+  pin, with the open-ended allowance kept for any raw residue a future run
+  brings home) and the aarch64 `pa` lane's
   `cfi-return-to-instruction-in-stack`, which delivered the registry's PAuth
   rejection code at one stamp and its generic illegal-call code at the next —
   both codes are declared for the record, so the gate scores it `declared`
@@ -580,11 +605,14 @@ corpus without adding isolation first.
   chosen observation. Compare stamps on the gate's classification (per-record
   `clean`/`declared`/out-of-expect), not on raw code equality.
 - **`riscv64-cfi` and `riscv64-nemu-cfi` stage byte-identical corpus binaries
-  but behave differently.** On the same staged files the qemu variant traps the
-  memory-corruption records that the NEMU variant completes benignly; which
-  implementation is conformant is an open question for the NEMU CFI research
-  cycles, not something this environment adjudicates. Treat a divergence between
-  the two armed lanes as a measurement, not as a lane failure.
+  and, since the healed 2026-11-22 pin, record identical codes.** The
+  defect-era divergence — the qemu variant trapping records the NEMU variant
+  completed benignly — is closed: the workspace's adjudication
+  (`tmp/research/nemu-divergence-adjudication-2026-11-20.md`) pinned it on the
+  QEMU translator defect above (NEMU conformant; the qemu side healed by the
+  11.1.3 upgrade), and the healed stamps are record-for-record identical
+  across the two lanes. Any future divergence between the two armed lanes is
+  a measurement worth investigating, not a lane failure.
 - **`.claude/` is machine-local and ignored wholesale.** Agent-tooling
   configuration in the repo root is machine-local by the 2026-10-24 policy:
   `.gitignore` covers it alongside `build/`, `results/` and `tmp/`. Unlike the

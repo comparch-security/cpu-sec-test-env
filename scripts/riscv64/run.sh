@@ -105,6 +105,22 @@ cleanup() {
       fi
       echo "firmware-opensbi-commit: $NEMU_OPENSBI_COMMIT"
     } >> "$DEST/versions.txt"
+    # A stamp must name the emulator it ran: the pin is a repo-relative path
+    # into the generated tree, and the distro qemu-system-riscv package line
+    # records a host prerequisite, not the executing binary - so the binary's
+    # own version line and sha256 are the authoritative record (the same shape
+    # as the NEMU lane's `# nemu` section).
+    {
+      echo "# emulator"
+      echo "emulator: $QEMU_SYSTEM_RISCV64"
+      if [ -f "$QEMU_SYSTEM_RISCV64" ]; then
+        echo "emulator-version: $("$QEMU_SYSTEM_RISCV64" --version 2>/dev/null | head -1)"
+        echo "qemu-sha256: $(sha256sum "$QEMU_SYSTEM_RISCV64" | cut -d' ' -f1)"
+      else
+        echo "emulator-version: unavailable (not a file: $QEMU_SYSTEM_RISCV64)"
+        echo "qemu-sha256: unavailable (not a file: $QEMU_SYSTEM_RISCV64)"
+      fi
+    } >> "$DEST/versions.txt"
     # Publication is the one irreversible act: a missing stamp must not leave
     # a silently incomplete "full" stamp behind an exit 0.
     if [ ! -s "$DEST/versions.txt" ]; then
@@ -136,7 +152,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The CPU request: rva23s64 in env.sh (qemu 10.2.1's named RVA23
+# The CPU request: rva23s64 in env.sh (qemu's named RVA23
 # Linux-capable hart profile) for the plain lane, the CFI property form
 # (rva23s64,zicfiss=on,zicfilp=on) for the armed variant - without the
 # advertisement the kernel and OpenSBI are blind to CFI.  Ubuntu's riscv64
