@@ -286,8 +286,17 @@ every other lane's codes are compared against; `--out` (default
 `results/comparison-<UTC>-<pid>`) is where the snapshot's `comparison.json` and
 `comparison.md` land.
 
-The tool refuses rather than guesses (exit 2): a mixed pin across the selected
-stamps, a stamp that is not a completed run (`run-status` missing or failed, an
+The classification pin is `env.sh`'s `BENCH_COMMIT`; `--registry-pin` names it
+explicitly for the registry-only-delta evidence mode. A pin bump that does not
+re-stamp renders every existing stamp non-comparable — unless the bench delta
+between the stamps' recorded pin and the registry pin names `configure.json`
+and plan archives only (a delta that cannot move a corpus key), in which case
+the stamps are accepted and the delta is recorded in the snapshot's
+`comparison.json` (`registry.mode: registry-only-delta`, the accepted deltas
+listed under `registry.accepted_deltas`); any other delta keeps the refusal.
+
+The tool refuses rather than guesses (exit 2): a mixed pin outside the
+registry-only-delta rule, a stamp that is not a completed run (`run-status` missing or failed, an
 evidence-only stamp, a missing or unparsable `results.json`), a `bench-tree`
 that is absent, `unavailable`, or `-dirty`, a missing reference lane, a pin not
 in the submodule's object store, or input past the size cap or malformed. A lane
@@ -327,7 +336,7 @@ All pins live in `env.sh` only — no script hard-codes them.
 
 | Item | Pin |
 |---|---|
-| bench commit | `eb191329a4cbb9100c63b826ef3966d7015ed9d8` — the correctness batch `9645e57` ("Fix five correctness deferrals: sentinel UB, dangling requires, stale declarations, redzone publication") plus its adjudication amendment `eb19132` ("Declare the armed-qemu peer-func outcome structural; open the residue set"). The batch restores four `int rv = 1;` sentinels and eight dangling require references, replaces `acc-check-IBT`'s impossible 290 with the observed 99, declares `mts-write-after-free-stack`'s residue space, and makes the redzone calibration publish the matched alignment distance (`rewrite_temp_file` plus the case's match-arm rewrite) — whose behavioural evidence is this repository's 2026-11-20 re-stamp, where the published values certified unchanged on this host. The amendment retracts the qemu-side claim on `cfi-return-to-peer-func` — on qemu the g1 calibration is itself caught and publishes nothing, so the case exits 1 before staging its attack and the prior 30 was an accidental exit-path fault of the old layout (30 stays scoped to the NEMU lane, where the calibration publishes; the qemu-vs-NEMU divergence record stands) — and restates the residue set open-ended, with 120 joining 136/200/248. Beneath them, `92f7deb` is bench cycle 4's registry amendment, "Declare the armed CFI class's observed qemu outcomes in the registry": 25 `expect-results` declarations record what the armed RISC-V ISA-CFI class does under qemu (the calibration chain's SEGV_CPERR exit 30, the corruption families' diagnostic deaths, the rows that collapse to a declared not-demonstrated code), each stated as a qemu-platform observation, never as CFI delivery, with the qemu-vs-NEMU divergence left under adjudication. That delta is registry-only (its plan-archive files ride along): no scheduler, test or source change, so the scheduler's collapse rule leaves every lane's recorded code identical to `182652b`'s. Beneath it, `182652b` is bench cycle 3's class-gap commit: `216da4ee` fixed the CFI-class stack-offset calibration and declared the armed class's allocator aborts, `182652b` anchored that calibration at the call's return site (`lpad 0` plus 4-byte label alignment defeats a label-address scan), and its parent `2aaf895` fixed the Zicfiss self-arm lock argument (the RISC-V `PR_LOCK_SHADOW_STACK_STATUS` takes `0`). Beneath them `cbe3bf9` made the benchmark a portable core: the embedded venue (`platform/riscv64-nemu-linux/`) is gone (this repository stages every system lane's corpus itself and carries the NEMU venue package), and the CHERI/Morello build skips are declared in the tracked registry, whose `skip` rows name the arch token a record does not build on and its cause (the Morello build bakes a distinct token, so its rows cannot collide with the healthy aarch64 lanes). All nine executable lanes carry stamps at this pin (2026-11-20 re-stamp); the two CHERI lanes keep their previous-pin stamps and are excluded from the pin-uniform comparison by design |
+| bench commit | `04f880b998565138c5697ca769811113914d603b` — the registry-realignment bookkeeping; its `configure.json` is byte-identical to the realignment beneath it, `73747ad` ("Retire the defect-era qemu CFI declarations from the registry"), which retires the declaration layer of `92f7deb` (the 25 armed-qemu declarations), `216da4ee` (the 262 allocator-abort pair) and `eb19132` (the open-ended residue restatement) plus the four `1aa6928`-era sweep-row 30 predictions — 34 entries across 31 records, each proven undelivered across the eleven 2026-11-22 stamps after the healed qemu falsified the defect-era predictions, and `cfi-return-to-peer-func`'s 30/1 reworded to the class-standard truths; registry-only (corpus keys unchanged, declared-30 delivery 12/19 → 12/12), re-graded green at this pin by the evidence-mode gate (`tmp/verification/2026-11-23-env-bench-realign-gate*`). Beneath it, the correctness batch `9645e57` ("Fix five correctness deferrals: sentinel UB, dangling requires, stale declarations, redzone publication") and its adjudication amendment `eb19132` ("Declare the armed-qemu peer-func outcome structural; open the residue set"). The batch restores four `int rv = 1;` sentinels and eight dangling require references, replaces `acc-check-IBT`'s impossible 290 with the observed 99, declares `mts-write-after-free-stack`'s residue space, and makes the redzone calibration publish the matched alignment distance (`rewrite_temp_file` plus the case's match-arm rewrite) — whose behavioural evidence is this repository's 2026-11-20 re-stamp, where the published values certified unchanged on this host. The amendment retracts the qemu-side claim on `cfi-return-to-peer-func` — on qemu the g1 calibration is itself caught and publishes nothing, so the case exits 1 before staging its attack and the prior 30 was an accidental exit-path fault of the old layout (30 stays scoped to the NEMU lane, where the calibration publishes; the qemu-vs-NEMU divergence record stands) — and restates the residue set open-ended, with 120 joining 136/200/248 (a restatement the `73747ad` realignment retired). Beneath them, `92f7deb` is bench cycle 4's registry amendment, "Declare the armed CFI class's observed qemu outcomes in the registry": 25 `expect-results` declarations record what the armed RISC-V ISA-CFI class does under qemu (the calibration chain's SEGV_CPERR exit 30, the corruption families' diagnostic deaths, the rows that collapse to a declared not-demonstrated code), each stated as a qemu-platform observation, never as CFI delivery, with the qemu-vs-NEMU divergence left under adjudication. That delta is registry-only (its plan-archive files ride along): no scheduler, test or source change, so the scheduler's collapse rule leaves every lane's recorded code identical to `182652b`'s. Beneath it, `182652b` is bench cycle 3's class-gap commit: `216da4ee` fixed the CFI-class stack-offset calibration and declared the armed class's allocator aborts, `182652b` anchored that calibration at the call's return site (`lpad 0` plus 4-byte label alignment defeats a label-address scan), and its parent `2aaf895` fixed the Zicfiss self-arm lock argument (the RISC-V `PR_LOCK_SHADOW_STACK_STATUS` takes `0`). Beneath them `cbe3bf9` made the benchmark a portable core: the embedded venue (`platform/riscv64-nemu-linux/`) is gone (this repository stages every system lane's corpus itself and carries the NEMU venue package), and the CHERI/Morello build skips are declared in the tracked registry, whose `skip` rows name the arch token a record does not build on and its cause (the Morello build bakes a distinct token, so its rows cannot collide with the healthy aarch64 lanes). All nine executable lanes carry stamps on the current pin chain (the 2026-11-20 re-stamp, the riscv64 family re-stamped 2026-11-22 at the healed qemu; the 2026-11-23 evidence-mode gate re-graded all nine against the realigned registry, the registry-only deltas between their recorded pins and this one being the gate's audited `accepted_deltas`); the two CHERI lanes keep their previous-pin stamps and are excluded from the pin-uniform comparison by design |
 | NEMU | `../NEMU` @ `ae1ec3cd869b9c5e1783af691538d5c26f37ee55` — the workspace checkout; `NEMU_DIR`/`NEMU_BIN` are a relative-default pair, and the binary's sha256 is recorded and compared run-to-run, **not** pinned |
 | NEMU-cfi | `../NEMU-cfi` @ `668eb688a7478fa8863220d8f81033ed786f6bb9` (NEMU master plus the Zicfiss/Zicfilp implementation, CFI-verified by the workspace's research cycles) — the `riscv64-nemu-cfi` lane's interpreter; `NEMU_CFI_DIR`/`NEMU_CFI_BIN` are a relative-default pair and the binary's sha256 **is** pinned (`NEMU_CFI_BIN_SHA256`) |
 | NEMU venue inputs | workload-builder `b7c321dec6ad6f4c78abcaefc722b59b4043503c`, OpenSBI `cbf9f6734dd85a982c63e3cb5db7ffe09da839ca`, LibCheckpointAlpha `5169da768d18f4682a489eaabe7c071df6d6ef88` — the absorbed image builder's upstream sources, one pin per input in `env.sh` |
@@ -571,26 +580,24 @@ corpus without adding isolation first.
   record-for-record: the calibration publishes the same stack values the NEMU
   variant publishes, the declared-30 backward-edge rows deliver on the rows
   whose attacks stage, the wild-death rows complete benignly, and the armed
-  lanes' recorded codes became identical (next bullet). The bench registry
-  still carries the defect-era qemu declarations (`92f7deb`/`eb19132`), which
-  are now stale-but-classifying — every healed code is either clean-0 or
-  already declared, so the gate stays green while the bench-side realignment
-  cycle (the reverse of `92f7deb`) retires or relabels those declarations
-  against this cycle's declaration delta
-  (`tmp/verification/2026-11-22-env-qemu-1113-gate.json`). The
-  `mts-write-after-free-stack` open-ended residue allowance stays
-  (exception-class: a raw residue value is recorded, never a stop), even
-  though the healed pin landed a benign completion. The env-side arming chain itself is
+  lanes' recorded codes became identical (next bullet). The defect-era qemu
+  declarations the bench registry carried (`92f7deb`/`eb19132`) were retired
+  at the realignment `73747ad` — each proven undelivered across the eleven
+  2026-11-22 stamps — and the set re-graded green at the current pin by the
+  evidence-mode gate (`tmp/verification/2026-11-23-env-bench-realign-gate*`):
+  every removed declaration named a code the healed qemu no longer delivers,
+  no delivered code lost its declaration, and the armed lanes' recorded codes
+  stayed identical. The `mts-write-after-free-stack` open-ended residue
+  allowance retired with them — the wild-return path was the defect's
+  derailment; a raw residue value a future run brings home re-enters by
+  routine bench amendment, recorded, never a stop. The env-side arming chain itself is
   green on both lanes: platform advertisement, OpenSBI v1.9 FWFT, kernel
   `CONFIG_RISCV_USER_CFI`, the self-arm blob's lock and `ssrdp` readback, and the
   GCC 16 corpus all verify. Compare the armed lanes against each other and
   against their plain counterparts, never as a pass/fail gate against the
   seven-lane baseline.
-- **Recorded codes are not universally stable run-to-run.** Two records are
-  measured movers: the qemu armed variant's `mts-write-after-free-stack` (the
-  residue exit status above — a benign completion at the healed 2026-11-22
-  pin, with the open-ended allowance kept for any raw residue a future run
-  brings home) and the aarch64 `pa` lane's
+- **Recorded codes are not universally stable run-to-run.** One record
+  remains a measured mover: the aarch64 `pa` lane's
   `cfi-return-to-instruction-in-stack`, which delivered the registry's PAuth
   rejection code at one stamp and its generic illegal-call code at the next —
   both codes are declared for the record, so the gate scores it `declared`
@@ -599,9 +606,13 @@ corpus without adding isolation first.
   rejection (19): every stamp except the 2026-11-19 one carries it, all four
   runs at the current pin reproduce it with identical calibration inputs, and
   the one generic-exception stamp is adjudicated the one-off draw (the aarch64
-  lanes pin no ASLR). The scheduler's collapse rule cannot absorb this: the
-  movers are
-  single-run records whose value comes from the death path itself, not from a
+  lanes pin no ASLR). The qemu armed variant's `mts-write-after-free-stack` —
+  the second mover this bullet used to carry — retired at the realignment
+  `73747ad`: the wild-return path was the defect's derailment and the healed
+  pin lands a benign completion, so a raw residue value a future run brings
+  home re-enters by routine bench amendment, recorded, never a stop. The
+  scheduler's collapse rule cannot absorb this: a mover is a single-run
+  record whose value comes from the death path itself, not from a
   chosen observation. Compare stamps on the gate's classification (per-record
   `clean`/`declared`/out-of-expect), not on raw code equality.
 - **`riscv64-cfi` and `riscv64-nemu-cfi` stage byte-identical corpus binaries

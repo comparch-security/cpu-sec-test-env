@@ -5,10 +5,21 @@ Every selected lane contributes one stamp under results/<lane>/ (the newest
 directory by name that carries a versions.txt at its top, or the one named with
 --stamp; retirement directories without one are never candidates).  A stamp is
 comparable only
-when it records the pin this checkout pins (env.sh's BENCH_COMMIT), the same
-bench checkout (bench-head equal to the pin, bench-tree the pin's tree and not
--dirty), a finished run (run-status: ok) and a parseable results.json object.
-The registry is read from the object store at that pin
+when it records the pin its run was made at (its own BENCH_COMMIT, carried as
+bench-head and bench-tree, not -dirty), that pin is the classification pin
+(env.sh's BENCH_COMMIT, or the commit named with --registry-pin), and the stamp
+is a finished run (run-status: ok) with a parseable results.json object.
+
+A stamp recorded at a pin other than the classification pin is comparable only
+in the registry-only-delta evidence mode: --registry-pin names the classification
+commit explicitly, and the stamp is accepted only when
+`git -C benchmark diff --name-only <stamp_pin> <registry_pin>` names
+configure.json and plan-archive (plans/) paths exclusively - a delta that cannot
+move a corpus key.  The accepted delta is recorded in comparison.json, so the
+relaxation is auditable and never silent.  Any delta touching another path keeps
+the mixed-pin refusal.  Without --registry-pin the classification pin is env.sh's
+BENCH_COMMIT and the same-pin fast path is refusal-free.  The registry is read
+from the object store at the classification pin
 (`git show <pin>:configure.json`), so the classification source is pinned by
 construction and immune to checkout drift.
 
@@ -30,8 +41,9 @@ Exit contract:
      not-run-skipped / class-masked
   1  a gate-failing row, an absent lane without --allow-absent, or a lane whose
      run-status is failed - the finding is dispositioned, never bypassed
-  2  an input or configuration refusal (mixed pin, missing reference, unreadable
-     registry or pin, a non-comparable selected stamp, a malformed CLI)
+  2  an input or configuration refusal (a mixed pin outside the registry-only-delta
+     rule, missing reference, unreadable registry or pin, a non-comparable
+     selected stamp, a malformed CLI)
 
 Outputs comparison.json (machine) and comparison.md (human) under --out.
 stdlib only; the single shell-out is `git`.
@@ -71,6 +83,7 @@ GATE_FAILING = {
 }
 
 PIN_RE = re.compile(r"^BENCH_COMMIT=([0-9a-fA-F]{40})$", re.M)
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 HEAD_RE = re.compile(r"^bench-head:[ \t]*(.*)$", re.M)
 TREE_RE = re.compile(r"^bench-tree:[ \t]*(.*)$", re.M)
 STATUS_RE = re.compile(r"^run-status:[ \t]*(.*)$", re.M)
@@ -122,6 +135,14 @@ def parse_args(argv):
         help="the lane every other lane's codes are compared against (default: x86_64)",
     )
     parser.add_argument(
+        "--registry-pin", default=None, metavar="SHA",
+        help="read the classification registry at SHA instead of env.sh's "
+             "BENCH_COMMIT; a stamp recorded at another pin is accepted only when "
+             "the bench delta to SHA names configure.json and plan archives "
+             "exclusively (the registry-only-delta evidence mode; the accepted "
+             "delta is recorded in comparison.json)",
+    )
+    parser.add_argument(
         "--allow-absent", action="append", default=[], metavar="LANE",
         help="record LANE as deliberately absent instead of gate-failing (repeatable)",
     )
@@ -153,6 +174,11 @@ def parse_args(argv):
                           % (args.reference, ",".join(lanes)))
         if args.max_bytes <= 0:
             raise Refusal("--max-bytes must be a positive integer (got %d)" % args.max_bytes)
+        if args.registry_pin is not None:
+            args.registry_pin = args.registry_pin.strip().lower()
+            if not SHA_RE.match(args.registry_pin):
+                raise Refusal("--registry-pin expects a 40-hex commit sha (got %r)"
+                              % args.registry_pin)
     except Refusal as exc:
         parser.error(str(exc))
 
@@ -234,6 +260,28 @@ def read_registry(pin):
     return registry
 
 
+def registry_archive_path(path):
+    """The only paths a comparable cross-pin delta may touch: the registry
+    itself and the archived plans.  Anything else can carry a corpus key."""
+    return path == "configure.json" or path.startswith("plans/")
+
+
+def bench_delta(stamp_pin, registry_pin):
+    """Classify the bench delta between a stamp's pin and the registry pin."""
+    proc = subprocess.run(
+        ["git", "-C", os.path.join(ROOT, "benchmark"), "diff", "--name-only",
+         stamp_pin, registry_pin],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if proc.returncode != 0:
+        raise Refusal("cannot diff the bench pins %s..%s ('git -C benchmark diff "
+                      "--name-only' rc=%d): %s"
+                      % (stamp_pin, registry_pin, proc.returncode, proc.stderr.strip()))
+    paths = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    outside = [path for path in paths if not registry_archive_path(path)]
+    return {"paths": paths, "outside": outside, "registry_only": not outside, "lanes": []}
+
+
 def stamp_dir_for(lane, overrides):
     if lane in overrides:
         path = overrides[lane]
@@ -255,8 +303,16 @@ def stamp_dir_for(lane, overrides):
     return os.path.join(base, max(names))
 
 
-def load_stamp(lane, stamp_dir, pin, max_bytes):
-    """Validate one stamp; refuse (exit 2) when it is not comparable."""
+def load_stamp(lane, stamp_dir, pin, max_bytes, evidence):
+    """Validate one stamp; refuse (exit 2) when it is not comparable.
+
+    `pin` is the classification pin.  `evidence` is None outside the evidence
+    mode (a stamp recorded at another pin is then a plain mixed-pin refusal),
+    or the accepted-delta cache under --registry-pin, where a stamp recorded at
+    another pin is comparable only when the bench delta to `pin` is
+    registry-only; the cache also collects the lanes of each accepted delta for
+    comparison.json.
+    """
     name = sanitize(os.path.basename(stamp_dir))
     where = "lane %s stamp %s" % (lane, name)
     vpath = os.path.join(stamp_dir, "versions.txt")
@@ -274,8 +330,23 @@ def load_stamp(lane, stamp_dir, pin, max_bytes):
                       % (where, len(pins)))
     stamp_pin = pins[0].lower()
     if stamp_pin != pin:
-        raise Refusal("%s: stamp pin %s != env.sh pin %s (mixed pin)"
-                      % (where, stamp_pin, pin))
+        if evidence is None:
+            raise Refusal("%s: stamp pin %s != env.sh pin %s (mixed pin)"
+                          % (where, stamp_pin, pin))
+        delta = evidence.get(stamp_pin)
+        if delta is None:
+            delta = bench_delta(stamp_pin, pin)
+            evidence[stamp_pin] = delta
+        if not delta["registry_only"]:
+            outside = delta["outside"]
+            shown = ", ".join(outside[:5]) + (
+                " and %d more" % (len(outside) - 5) if len(outside) > 5 else "")
+            raise Refusal("%s: stamp pin %s != registry pin %s (mixed pin; the bench "
+                          "delta to the registry pin touches %s, so it is not a "
+                          "registry-only delta)"
+                          % (where, stamp_pin, pin, shown or "no path"))
+        if lane not in delta["lanes"]:
+            delta["lanes"].append(lane)
 
     for label, regex in (("bench-head", HEAD_RE), ("bench-tree", TREE_RE),
                          ("run-status", STATUS_RE)):
@@ -286,13 +357,16 @@ def load_stamp(lane, stamp_dir, pin, max_bytes):
     tree = TREE_RE.search(text).group(1).strip()
     status = STATUS_RE.search(text).group(1).strip()
 
-    if head != pin:
-        raise Refusal("%s: bench-head %r is not the pin %s" % (where, sanitize(head), pin))
+    if head != stamp_pin:
+        raise Refusal("%s: bench-head %r is not the pin %s"
+                      % (where, sanitize(head), stamp_pin))
     if "-dirty" in tree:
         raise Refusal("%s: bench-tree %r carries a -dirty marker - the results came "
                       "from an edited checkout" % (where, sanitize(tree)))
-    if not (tree == pin or (7 <= len(tree) < len(pin) and pin.startswith(tree))):
-        raise Refusal("%s: bench-tree %r is not the pin's tree" % (where, sanitize(tree)))
+    if not (tree == stamp_pin or (7 <= len(tree) < len(stamp_pin)
+                                  and stamp_pin.startswith(tree))):
+        raise Refusal("%s: bench-tree %r is not the pin's tree"
+                      % (where, sanitize(tree)))
 
     if status == "ok":
         run_ok, run_rc = True, 0
@@ -392,10 +466,12 @@ def lane_rows(stamp, registry):
 
 def compare(args):
     pin = read_pin()
-    registry = read_registry(pin)
+    registry_pin = args.registry_pin or pin
+    registry = read_registry(registry_pin)
 
     lanes = {}
     findings = []
+    evidence = {} if args.registry_pin else None
     for lane in args.lane_list:
         stamp_dir = stamp_dir_for(lane, args.overrides)
         allowed_absent = lane in args.allow_absent
@@ -407,7 +483,7 @@ def compare(args):
             if not allowed_absent:
                 findings.append("lane %s is absent (no stamp under results/%s/)" % (lane, lane))
             continue
-        stamp = load_stamp(lane, stamp_dir, pin, args.max_bytes)
+        stamp = load_stamp(lane, stamp_dir, registry_pin, args.max_bytes, evidence)
         stamp["allowed_absent"] = allowed_absent
         stamp["rows"] = lane_rows(stamp, registry)
         counts = {}
@@ -430,10 +506,26 @@ def compare(args):
     if reference.get("absent"):
         raise Refusal("the reference lane %r has no stamp" % args.reference)
 
+    accepted = [
+        {
+            "stamp_pin": stamp_pin,
+            "registry_pin": registry_pin,
+            "lanes": sorted(delta["lanes"]),
+            "paths": delta["paths"],
+        }
+        for stamp_pin, delta in sorted((evidence or {}).items())
+    ]
     report = {
         "tool": "scripts/common/compare_lanes.py",
         "generated": args.now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "pin": pin,
+        "registry": {
+            "pin": registry_pin,
+            "env_pin": pin,
+            "source": "--registry-pin" if args.registry_pin else "env.sh",
+            "mode": "registry-only-delta" if accepted else "same-pin",
+            "accepted_deltas": accepted,
+        },
         "reference": args.reference,
         "lanes": [flatten_lane(lanes[lane]) for lane in args.lane_list],
         "absent_lanes": [lane for lane in args.lane_list if lanes[lane]["absent"]],
@@ -509,16 +601,30 @@ def write_outputs(out_dir, report):
 
 
 def render_markdown(report):
+    registry = report["registry"]
     lines = [
         "# Lane comparison at %s" % report["pin"],
         "",
         "- Reference: `%s`" % report["reference"],
         "- Generated: %s" % report["generated"],
         "- Gate exit: **%d**" % report["gate"]["exit"],
-        "",
-        "## Lanes",
-        "",
     ]
+    if registry["source"] == "--registry-pin":
+        lines.append("- Registry: `%s` (%s; env.sh pin `%s`)"
+                     % (registry["pin"], registry["mode"], registry["env_pin"]))
+    lines.append("")
+    if registry["accepted_deltas"]:
+        lines.append("## Accepted registry-only deltas")
+        lines.append("")
+        for delta in registry["accepted_deltas"]:
+            lines.append("- `%s` -> `%s` (lanes: %s): %s"
+                         % (delta["stamp_pin"], delta["registry_pin"],
+                            ", ".join("`%s`" % lane for lane in delta["lanes"]),
+                            ", ".join("`%s`" % path for path in delta["paths"])
+                            or "no path changed"))
+        lines.append("")
+    lines.append("## Lanes")
+    lines.append("")
     verdicts = ["clean", "declared", "not-run-skipped", "class-masked",
                 "out-of-expect", "build-failed", "prerequisite-unsatisfied",
                 "missing-from-lane", "extra-record"]
@@ -565,6 +671,14 @@ def render_markdown(report):
 
 def print_summary(report, out_dir):
     print("compare_lanes: pin %s, reference %s" % (report["pin"], report["reference"]))
+    registry = report["registry"]
+    if registry["source"] == "--registry-pin":
+        print("  registry pin %s (%s), env.sh pin %s"
+              % (registry["pin"], registry["mode"], registry["env_pin"]))
+    for delta in registry["accepted_deltas"]:
+        print("  registry-only delta %s -> %s accepted for %s: %s"
+              % (delta["stamp_pin"], delta["registry_pin"], ", ".join(delta["lanes"]),
+                 ", ".join(delta["paths"]) or "no path changed"))
     for lane in report["lanes"]:
         if lane["absent"]:
             print("  %-13s absent%s"

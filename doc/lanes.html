@@ -284,7 +284,7 @@
             edge, <code>sspopchk</code>) and 31 (forward edge, landing pad).
         </p>
         <p>
-            Provisional results are the class's own, adjudicated at bench
+            Provisional results were the class's own, adjudicated at bench
             <code>eb19132</code> (2026-11-20): arming changes the corpus-wide
             outcome, not only the <code>cfi-return-*</code> family — the qemu
             variant's stack-offset calibrators are themselves caught and publish
@@ -298,6 +298,18 @@
             NEMU CFI research adjudication, so the armed lanes are read against
             each other and against their plain counterparts, never as a
             pass/fail gate.
+        </p>
+        <p>
+            The divergence has since closed: the healed 11.1.3 restamp
+            (2026-11-22) reproduced the adjudicated prediction
+            record-for-record, and bench <code>73747ad</code> (2026-11-23)
+            retired the defect-era qemu declarations the divergence left stale
+            — each proven undelivered across the eleven 2026-11-22 stamps —
+            re-graded green at the current pin by this repository's
+            evidence-mode gate (<code>tmp/verification/2026-11-23-env-bench-realign-gate</code>).
+            The armed lanes record identical codes at the current pins; any
+            future divergence between them is a measurement worth investigating,
+            not a lane failure.
         </p>
 
         <h2>riscv64-nemu</h2>

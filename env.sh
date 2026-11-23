@@ -6,7 +6,16 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-# eb19132 is the adjudication amendment over the correctness batch beneath,
+# 04f880b is the registry realignment, "Flip cfi-require-names-absent-from-registry
+# to Resolved": bookkeeping over 73747ad, "Retire the defect-era qemu CFI
+# declarations from the registry" (its `configure.json` byte-identical -- the
+# archived realignment plan's Issue Log row flip), and 73747ad reverses the
+# declaration layer of 92f7deb (the 25 armed-qemu declarations), 216da4ee (the
+# 262 allocator-abort pair) and eb19132 (the open-ended residue restatement),
+# plus the four 1aa6928-era sweep-row 30 predictions: 34 entries retired across
+# 31 records, registry-only -- corpus keys unchanged, declared-30 delivery
+# 12/19 to 12/12.
+# Beneath it, eb19132 is the adjudication amendment over the correctness batch beneath,
 # "Declare the armed-qemu peer-func outcome structural; open the residue set":
 # the restamp surfaced that `cfi-return-to-peer-func`'s qemu-side attack was
 # never staged -- the g1 calibration is itself caught (exit 30) and publishes
@@ -76,7 +85,7 @@
 # (f4c916a), the scheduler's corpus mode (a09f570) and the opcode-extraction
 # fix (74195c4).  The tracked registry is never swapped, so the submodule stays
 # clean through a deploy and any dirt in it is a real edit.
-BENCH_COMMIT=eb191329a4cbb9100c63b826ef3966d7015ed9d8
+BENCH_COMMIT=04f880b998565138c5697ca769811113914d603b
 
 # Every lane run's preflight: `git -C benchmark status --short` must be empty
 # (the deploy legs, the run legs and each lane's post-clean assert all read
