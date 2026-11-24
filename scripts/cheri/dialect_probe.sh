@@ -132,20 +132,36 @@ verdicts = {}
 for dialect in ("cheri_riscv64", "morello"):
     codes = {p["variant"]: p["exit_code"] for p in probes
              if p["dialect"] == dialect}
-    if any(c == 0 for c in codes.values()):
-        # never use the substring "reject" in an accepted verdict (the step-5
-        # verifier keys on it)
+    as_is = codes["as-is"]
+    fix = codes["fix-text"]
+    # Branch on WHICH variant exited 0.  Never use the substring "reject" in an
+    # accepted verdict (the step-5 verifier keys on it).
+    if fix == 0 and as_is != 0:
         verdicts[dialect] = (
             "accepted: fix-text variant exit %d; as-is exit %d "
             "(the untranslated x86 body fails any riscv/morello assembler - "
             "the dialect verdict is grounded in the fix-text variant)"
-            % (codes["fix-text"], codes["as-is"]))
+            % (fix, as_is))
+    elif fix == 0 and as_is == 0:
+        verdicts[dialect] = (
+            "accepted: both variants exit 0 (as-is %d, fix-text %d) - the "
+            "probe does not discriminate the dialect here, but neither "
+            "variant was turned away"
+            % (as_is, fix))
+    elif as_is == 0 and fix != 0:
+        verdicts[dialect] = (
+            "inconclusive: as-is exit %d (the untranslated x86 body assembles) "
+            "but fix-text exit %d (the vendored translation does not) - the "
+            "two contradict, so no verdict can be grounded in the fix-text "
+            "variant; stderr in the probe records carries the assembler "
+            "diagnostics"
+            % (as_is, fix))
     else:
         verdicts[dialect] = (
             "rejected: as-is exit %d, fix-text exit %d - this toolchain does "
             "not accept the dialect (or the vendored translation text); "
             "stderr in the probe records carries the assembler diagnostics"
-            % (codes["as-is"], codes["fix-text"]))
+            % (as_is, fix))
 
 out = {
     "cheribuild_commit": os.environ["CHERIBUILD_COMMIT"],

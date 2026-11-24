@@ -18,9 +18,10 @@ in the `benchmark/` submodule, consumed read-only at the commit pinned in `env.s
 ## Rules
 
 - **One lane at a time.** Every lane entry point that mutates the bench worktree — the
-  run and clean paths, and the corpus-staging deploy legs — takes an advisory flock on
-  `build/.lane.lock` and fails fast naming the holder (`dump` is the exception: it takes
-  no lock). Every lane run, success or failure, collects its artifacts into `results/`,
+  run and clean paths, the corpus-staging deploy legs, and the x86_64 and aarch64
+  `dump` recipes — takes an advisory flock on
+  `build/.lane.lock` and fails fast naming the holder. Every lane run, success or
+  failure, collects its artifacts into `results/`,
   cleans the submodule and asserts it is clean; a run that hits its timeout (exit 124)
   publishes nothing.
 - **All pins live in `env.sh` only.** The Makefile and the scripts never hard-code a pin,
@@ -60,7 +61,9 @@ env.sh                      every pin, URL, timeout and root — the single sour
 scripts/
   common/                   shared machinery: stage_corpus.sh (the one corpus staging
                             path), corpus_manifest.py, compare_lanes.py, shim.sh,
-                            version_stamp.sh
+                            version_stamp.sh, fetch.sh (the shared pinned-tarball
+                            fetcher), aarch64_makeflags.sh (the one MAKEFLAGS
+                            composer)
   aarch64/                  prepare.sh / run.sh — the binfmt lane (+ pa/bti/mte variants)
   riscv64/                  OpenSBI firmware + kernel + busybox + rootfs image builders;
                             run.sh

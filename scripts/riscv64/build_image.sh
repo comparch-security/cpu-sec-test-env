@@ -365,7 +365,9 @@ assert_closure_reachable "${CLOSURE_CHECK[@]}"
 
 # ---- reproducibility: normalize mtimes, deterministic cpio ----
 find "$STAGE" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
-( cd "$STAGE" && find . | LC_ALL=C sort | cpio -o -H newc --reproducible --owner=0:0 ) > "$CPIO" 2>/dev/null
+# cpio's own diagnostics - including its block-count line - are deliberately
+# NOT silenced: they reach the deploy log.
+( cd "$STAGE" && find . | LC_ALL=C sort | cpio -o -H newc --reproducible --owner=0:0 ) > "$CPIO"
 [ -s "$CPIO" ] || die "rootfs.cpio is empty"
 
 # ---- image manifest (sha256s + pins) ----

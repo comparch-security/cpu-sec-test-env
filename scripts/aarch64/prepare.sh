@@ -391,12 +391,13 @@ case "$machine" in
 esac
 
 # ---- guest-truth header (overwrites the Makefile's generic sys_info.txt) ----
-# The MAKEFLAGS composition below MUST match scripts/aarch64/run.sh exactly:
-# this is the same string the scheduler's child makes will receive.
-mf="ARCH=$ARCH CXX=$AARCH64_CXX ASM=$AARCH64_AS OBJDUMP=$AARCH64_OBJDUMP"
-if [ -n "$ENABLE_FLAG" ]; then
-  mf="$mf $ENABLE_FLAG=yes"
-fi
+# The MAKEFLAGS string comes from the one composer in
+# scripts/common/aarch64_makeflags.sh - the same string run.sh exports for the
+# scheduler's child makes (this header records what the children receive, so the
+# one composer keeps the two from drifting apart).
+# shellcheck source=../common/aarch64_makeflags.sh
+. "$ROOT/scripts/common/aarch64_makeflags.sh"
+mf=$(aarch64_makeflags)
 # The CPU line records the REQUEST actually in effect (the request-less lanes
 # cleared any inherited value above) and, separately, the OBSERVATION - the
 # loader line the smoke produced under that request - so a stamp says what was

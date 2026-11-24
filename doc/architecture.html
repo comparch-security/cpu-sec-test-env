@@ -29,11 +29,14 @@
 
         <p>
             Every lane entry point that mutates the bench worktree — the run and
-            clean paths, and the corpus-staging deploy legs — takes an advisory
+            clean paths, the corpus-staging deploy legs, and the x86_64 and
+            aarch64 <code>dump</code> recipes, which build into the worktree —
+            takes an advisory
             <code>flock</code> on <code>build/.lane.lock</code> and writes the lane
             name into it; a second concurrent lane fails fast with
             <code>lane busy: &lt;holder&gt; holds build/.lane.lock</code>
-            (<code>dump</code> is the deliberate exception: it takes no lock). The
+            (<code>dump</code> took no lock until the 2026-11-24 hardening batch
+            closed that exception). The
             lock file is opened append-style by the Makefile and by every lane
             script, so a contender's open never wipes the holder's name before the
             contention check reads it, and the name is written only after the lock

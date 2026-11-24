@@ -399,7 +399,10 @@ is_riscv_elf "$OUT/rootfs/bench/nemu-trap" || die "nemu-trap is not a riscv64 EL
 # deterministically in list order and directory link counts are pinned, so the
 # host's own inode numbers never reach the newc headers.
 find "$OUT/rootfs" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
-( cd "$OUT/rootfs" && find . | LC_ALL=C sort | cpio -o -H newc --owner=0:0 --reproducible ) > "$DEST/rootfs.cpio" 2>/dev/null
+# cpio's own diagnostics - including its block-count line - are deliberately
+# NOT silenced: they reach the deploy log, so an archive error is visible
+# rather than swallowed.
+( cd "$OUT/rootfs" && find . | LC_ALL=C sort | cpio -o -H newc --owner=0:0 --reproducible ) > "$DEST/rootfs.cpio"
 echo "   rootfs.cpio: $(stat -c%s "$DEST/rootfs.cpio") bytes"
 
 echo "== [8/8] assemble fw_payload.bin"

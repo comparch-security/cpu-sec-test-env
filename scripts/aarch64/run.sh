@@ -170,10 +170,12 @@ echo "aarch64/run ($LANE): bare objdump resolves to: $(command -v objdump) ($(ob
 # aarch64 ELF the kernel hands it through binfmt.
 export QEMU_LD_PREFIX="$AARCH64_SYSROOT"
 
-# The lane's MAKEFLAGS - MUST match the composition in prepare.sh (the
-# sys_info header records the same string).  Command-line strength for the
-# scheduler's child makes: CXX resolves to aarch64-linux-gnu-g++-13 (the
-# env.sh AARCH64_CXX pin).  The CPU request (the same rule prepare.sh applies):
+# The lane's MAKEFLAGS comes from the one composer in
+# scripts/common/aarch64_makeflags.sh - prepare.sh records the same string in
+# sys_info.txt, so the header and this export cannot drift apart.  Command-line
+# strength for the scheduler's child makes: CXX resolves to
+# aarch64-linux-gnu-g++-13 (the env.sh AARCH64_CXX pin).  The CPU request (the
+# same rule prepare.sh applies):
 # for the MTE lane QEMU_CPU=max (the env.sh QEMU_CPU_AARCH64_MTE pin - the
 # venue's default model plus PAuth, pinned so the lane's claim is legible; it
 # already advertises HWCAP2_MTE and enforces tag checks, and unlike the pa pin
@@ -189,11 +191,9 @@ export QEMU_LD_PREFIX="$AARCH64_SYSROOT"
 # The request-less lanes clear an ambient QEMU_CPU instead of inheriting it,
 # and QEMU_VERSION is dropped outright: an inherited value makes qemu-aarch64
 # print its banner and exit 0 before parsing -cpu or loading any guest.
-mf="ARCH=$ARCH CXX=$AARCH64_CXX ASM=$AARCH64_AS OBJDUMP=$AARCH64_OBJDUMP"
-if [ -n "$ENABLE_FLAG" ]; then
-  mf="$mf $ENABLE_FLAG=yes"
-fi
-export MAKEFLAGS="$mf"
+# shellcheck source=../common/aarch64_makeflags.sh
+. "$ROOT/scripts/common/aarch64_makeflags.sh"
+export MAKEFLAGS="$(aarch64_makeflags)"
 unset QEMU_VERSION
 case "$LANE" in
   aarch64-mte) export QEMU_CPU="$QEMU_CPU_AARCH64_MTE" ;;
@@ -206,3 +206,11 @@ esac
 # relative path in it (results/, benchmark/$f, make -C benchmark) resolves
 # inside the submodule and the collection silently does nothing.
 (cd benchmark && timeout "$LANE_RUN_TIMEOUT" ./run-test exhausted-run)
+
+# The shim must have been exercised: the bench Makefile's opcode-extraction
+# rule (benchmark/Makefile:595) writes test/acc-read-func-func-opcode.tmp
+# through the PATH'd objdump.  Its absence or emptiness after the run means the
+# shim at $SHIM_DIR never resolved and a bare `objdump` fell back to the host
+# x86 tool, so the extracted opcodes are not this lane's.
+[ -s benchmark/test/acc-read-func-func-opcode.tmp ] ||
+  die "benchmark/test/acc-read-func-func-opcode.tmp is absent or empty after the run - the objdump shim at $SHIM_DIR was likely never exercised (bare objdump fell back to the host x86 tool)"

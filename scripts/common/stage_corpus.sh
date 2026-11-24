@@ -107,6 +107,23 @@ case "$OUT_DIR" in
     ;;
 esac
 
+# ---- OUT_DIR must never be (or contain) a whole generated tree ----
+# The staging step below ends in `rm -rf "$OUT_DIR"`; an OUT_DIR equal to
+# $BUILD_DIR or $RESULTS_DIR -- or a parent of either -- would wipe every
+# lane's build tree or every published stamp in one wholesale rm.  OUT_DIR
+# *inside* build/ is the normal case and stays legal: the test matches
+# equality/ancestry only, never containment.  Runs before the caller-lock
+# check, so a scratch invocation gets the refusal without holding the lock.
+while [ "${OUT_DIR%/}" != "$OUT_DIR" ]; do OUT_DIR=${OUT_DIR%/}; done
+for rooted in "$BUILD_DIR" "$RESULTS_DIR"; do
+  case "$ROOT/$rooted/" in
+    "$OUT_DIR"/*)
+      di "refusing OUT_DIR '$OUT_DIR': it is '$rooted' or contains it, and staging's wholesale rm -rf would delete it"
+      exit 2
+      ;;
+  esac
+done
+
 # ---- caller-locked: fd 9 must be the held lane lock (see the header) ----
 mkdir -p "$BUILD_DIR"
 LANE_LOCK="$BUILD_DIR/.lane.lock"
@@ -335,9 +352,16 @@ fi
 # registry side files, and the declared plain-name support files.  Non-unit
 # build byproducts (plain binaries, objects, the scratch sys_info) are never
 # staged.
-mapfile -t PLAN < <(python3 "$ROOT/scripts/common/corpus_manifest.py" \
-  --registry "$ROOT/benchmark/configure.json" --lane "$TOKEN" --print-plan)
-[ "${#PLAN[@]}" -gt 0 ] || { di "the registry enumerates no stageable artifact for lane $LANE (token $TOKEN)"; exit 1; }
+# The parser's exit status must be checked explicitly: a process substitution's
+# rc is discarded by mapfile, so a crashing manifest parser would otherwise read
+# as "the registry enumerates no stageable artifact" (a staging-content error)
+# instead of the parser failure it is.  Command substitution propagates the rc;
+# the healthy path's rows are unchanged (one trailing newline either way).
+plan_raw=$(python3 "$ROOT/scripts/common/corpus_manifest.py" \
+  --registry "$ROOT/benchmark/configure.json" --lane "$TOKEN" --print-plan) ||
+  { di "the registry manifest parser failed (rc=$?) - see the error above"; exit 1; }
+[ -n "$plan_raw" ] || { di "the registry enumerates no stageable artifact for lane $LANE (token $TOKEN)"; exit 1; }
+mapfile -t PLAN <<< "$plan_raw"
 
 echo "== stage_corpus ($LANE): staging -> $OUT_DIR"
 rm -rf "$OUT_DIR"

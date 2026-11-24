@@ -8,3 +8,8 @@ tmp/
 __pycache__/
 # Agent-tooling configuration: machine-local, ignored wholesale (2026-10-24 policy).
 .claude/
+# Node strays from editor tooling: a broad `git add -A` once nearly staged a
+# full node_modules tree into this shell/Python repo (deferral item 12).
+node_modules/
+package.json
+package-lock.json

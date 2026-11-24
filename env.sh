@@ -6,7 +6,22 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-# 04f880b is the registry realignment, "Flip cfi-require-names-absent-from-registry
+# 83bb545 is the scheduler-safety batch, "Bound the scheduler's argv pool and
+# initialise read-cross-segment's tc": two latent scheduler defects carried as
+# filed deferrals.  argv_conv copied every argument into the fixed 32x256
+# arg_pool with unchecked strcpy (no bound on count or length) - guards before
+# each pool copy now reject i >= 32 or length >= 256 with the named Parse
+# abnormality fail-fast (exit 1, no result code minted), in-range behavior
+# unchanged; mss/read-cross-segment.cpp read its tc uninitialised when
+# des_type fell outside its switch - it is initialised to '?' in the rv = 1
+# house-sentinel form, scope unchanged.  Registry, catalog and result-code
+# contract untouched.  The batch brushes the lib-batch canary rule's letter
+# (read-cross-segment IS a link input of its own case binaries), so the
+# consuming env cycle's re-stamp opens with the armed-lane canary leg -
+# riscv64-cfi asserted byte-identical to its predecessor before any other lane
+# starts - and this cycle's nine-lane re-stamp is the batch's behavioural
+# evidence.
+# Beneath it, 04f880b is the registry realignment, "Flip cfi-require-names-absent-from-registry
 # to Resolved": bookkeeping over 73747ad, "Retire the defect-era qemu CFI
 # declarations from the registry" (its `configure.json` byte-identical -- the
 # archived realignment plan's Issue Log row flip), and 73747ad reverses the
@@ -85,7 +100,7 @@
 # (f4c916a), the scheduler's corpus mode (a09f570) and the opcode-extraction
 # fix (74195c4).  The tracked registry is never swapped, so the submodule stays
 # clean through a deploy and any dirt in it is a real edit.
-BENCH_COMMIT=04f880b998565138c5697ca769811113914d603b
+BENCH_COMMIT=83bb545d194d935f655729a4ca5857c07ff8b1c5
 
 # Every lane run's preflight: `git -C benchmark status --short` must be empty
 # (the deploy legs, the run legs and each lane's post-clean assert all read

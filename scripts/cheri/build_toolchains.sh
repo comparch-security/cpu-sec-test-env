@@ -9,7 +9,9 @@ set -euo pipefail
 #   - the fetched tarball's observed sha256 is recorded in
 #     build/cheri/versions.txt (the cheribuild pin is a commit id, not a
 #     content hash - codeload tarballs of a commit are stable, but the plan
-#     records the observed hash rather than pinning one);
+#     records the observed hash rather than pinning one); a later run re-hashes
+#     a cached tarball against that record and refetches on a mismatch or an
+#     absent record (fail closed);
 #   - runs `cheribuild.py --source-root ... --output-root ... --build-root
 #     ... --skip-update llvm` (CHERI-LLVM, the decisive toolchain, first),
 #     then `morello-llvm`.  The LLVM source trees are pre-staged by the
@@ -42,10 +44,27 @@ VERSIONS="$CHERI_BROOT/versions.txt"
 # ---- fetch: .part + atomic rename (no pinned sha256 for the cheribuild
 # tarball - the observed hash is recorded in versions.txt below) ----
 fetch_cheribuild() {
-  local url="$CHERIBUILD_URL/$CHERIBUILD_COMMIT" attempt
+  local url="$CHERIBUILD_URL/$CHERIBUILD_COMMIT" attempt recorded observed
   if [ -f "$TARBALL" ]; then
-    echo "cheribuild: using cached $TARBALL"
-    return 0
+    # Cache hit: re-hash against the sha256 the previous run recorded.  The
+    # commit pin names a tree, not a content hash, so this recorded value is
+    # the tarball's only integrity check.  The read MUST stay inside this
+    # function: version_stamp.sh rewrites versions.txt AFTER fetch_cheribuild
+    # returns (the call order below guarantees the record is the prior run's).
+    # Fail closed - an absent record or a mismatch means the cache cannot be
+    # trusted, so refetch (mirrors build_kernel.sh's verified cache).
+    recorded=$(sed -n 's/^cheribuild-tarball-sha256: *//p' "$VERSIONS" 2>/dev/null | head -n1) || true
+    observed=$(sha256sum "$TARBALL" | awk '{print $1}')
+    if [ -n "$recorded" ] && [ "$recorded" = "$observed" ]; then
+      echo "cheribuild: using cached $TARBALL (sha256 verified)"
+      return 0
+    fi
+    if [ -z "$recorded" ]; then
+      echo "cheribuild: cached $TARBALL has no recorded sha256 in $VERSIONS - refetching" >&2
+    else
+      echo "cheribuild: cached $TARBALL fails sha256 verification (recorded $recorded, observed $observed) - refetching" >&2
+    fi
+    rm -f "$TARBALL"
   fi
   mkdir -p "$(dirname "$TARBALL")"
   for attempt in 1 2 3; do

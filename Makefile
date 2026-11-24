@@ -225,6 +225,7 @@ clean:
 
 dump:
 	@set -e
+	$(call acquire_lane_lock,x86_64)
 	make -C benchmark dump
 
 .PHONY: deploy run clean dump
@@ -249,6 +250,7 @@ clean:
 
 dump:
 	@set -e
+	$(call acquire_lane_lock,$(LANE_NAME))
 	bash scripts/common/shim.sh $(AARCH64_TRIPLE) $(BUILD_DIR)/$(LANE_NAME)/shim
 	PATH=$(BUILD_DIR)/$(LANE_NAME)/shim:$$PATH make -C benchmark dump \
 	  ARCH=aarch64 CXX=$(AARCH64_CXX) ASM=$(AARCH64_AS) OBJDUMP=$(AARCH64_OBJDUMP)
