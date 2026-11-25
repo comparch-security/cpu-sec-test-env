@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="last-modified" content="2026-11-19">
+    <meta name="last-modified" content="2026-11-25">
     <title>Lanes | cpu-sec-test-env</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -405,6 +405,17 @@
             legs carry the lane deploy timeout while the emulator and image builds
             carry the generous CHERI build timeout — an outer lane-deploy timeout
             would fire in the middle of a world build.
+            Grading (2026-11-25): the lane joins the pin-uniform comparison
+            through the gate's explicit <code>--lanes</code> argument. Its one
+            tracked skip is <code>mss-write-by-stack-pointer</code> — the
+            falsified <code>acc-get-frame-size</code> skip was retired at the
+            current bench pin, and the record now runs and publishes
+            <code>frame-size</code>, which un-hollows its consumer
+            <code>cfi-return-without-call</code>: the case attacks with the real
+            <code>-vframe-size</code> and lands in its declared bus-error
+            family. The Oct-24-era <code>cfi-call-mid-func</code> = 50 delivery
+            defect is gone at the current pin — the delivery-block fix reaches
+            the CHERI port and the record now delivers clean.
         </p>
 
         <h2>aarch64-morello</h2>
@@ -415,6 +426,15 @@
             <code>-kernel</code>. The machine is <code>virt</code> with GICv3; the
             corpus and results travel over the same two virtio-9p shares, driven
             by the same console driver.
+            Grading (2026-11-25): also gate-graded via <code>--lanes</code>. Its
+            one tracked skip is <code>cfi-call-mid-func</code> (the Morello build
+            crashes the LLVM backend: <code>blockaddress</code> is only valid
+            for the current function). The held
+            <code>cfi-return-without-call</code> = 260 observation — held by the
+            2026-10-25 intent check for one guest-side observation — is
+            reproduced at the current pin and filed bench-side for the
+            declare-or-fix decision; code-identity movers on this lane stay
+            within all-declared record sets.
         </p>
 
         <h2>Do not simplify</h2>
@@ -428,7 +448,7 @@
         </p>
     </main>
     <footer>
-        <p>Last updated: 2026-10-31 — keep in sync with <code>env.sh</code> and
+        <p>Last updated: 2026-11-25 — keep in sync with <code>env.sh</code> and
             <code>scripts/</code>.</p>
     </footer>
 </body>

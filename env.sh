@@ -6,7 +6,20 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-# 83bb545 is the scheduler-safety batch, "Bound the scheduler's argv pool and
+# 0eb79b6 is the deferral-disposition batch, "Resolve six open deferrals:
+# ARCH-forcing hoist, skip-row retirement, evidence closure": two behavioural
+# changes.  The Makefile hoists both flag forcings above the first ARCH
+# consumer, so flag-only invocations compose the forced ARCH everywhere (lane
+# forms byte-identical).  The falsified `acc-get-frame-size` skip row is
+# retired -- GET_SP_LOC exists against the pinned purecap sysroot, compile
+# proven bench-side -- which puts the record live on `cheri_riscv64`.  Both
+# affected records are named per the bench's successor-obligation note: the
+# producer `acc-get-frame-size` now publishes `frame-size`, and its consumer
+# `cfi-return-without-call` (which takes `-vframe-size`) has its recorded
+# outcome unlocked from the literal-token fallback.  The delta is not
+# registry-only (the Makefile changes), so the consuming cycle re-stamps ALL
+# ELEVEN lanes at the pin.
+# Beneath it, 83bb545 is the scheduler-safety batch, "Bound the scheduler's argv pool and
 # initialise read-cross-segment's tc": two latent scheduler defects carried as
 # filed deferrals.  argv_conv copied every argument into the fixed 32x256
 # arg_pool with unchecked strcpy (no bound on count or length) - guards before
@@ -100,7 +113,7 @@
 # (f4c916a), the scheduler's corpus mode (a09f570) and the opcode-extraction
 # fix (74195c4).  The tracked registry is never swapped, so the submodule stays
 # clean through a deploy and any dirt in it is a real edit.
-BENCH_COMMIT=83bb545d194d935f655729a4ca5857c07ff8b1c5
+BENCH_COMMIT=0eb79b6aaf4ed5b77c5c20ad858ff343f1ae003e
 
 # Every lane run's preflight: `git -C benchmark status --short` must be empty
 # (the deploy legs, the run legs and each lane's post-clean assert all read
