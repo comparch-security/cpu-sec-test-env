@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="last-modified" content="2026-11-25">
+    <meta name="last-modified" content="2026-11-26">
     <title>Lanes | cpu-sec-test-env</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -429,11 +429,15 @@
             Grading (2026-11-25): also gate-graded via <code>--lanes</code>. Its
             one tracked skip is <code>cfi-call-mid-func</code> (the Morello build
             crashes the LLVM backend: <code>blockaddress</code> is only valid
-            for the current function). The held
+            for the current function). The
             <code>cfi-return-without-call</code> = 260 observation — held by the
             2026-10-25 intent check for one guest-side observation — is
-            reproduced at the current pin and filed bench-side for the
-            declare-or-fix decision; code-identity movers on this lane stay
+            declared as of the current pin (<code>8d07b2a</code>, 2026-11-26):
+            260 (256+SIGILL) is Morello's own rendering of the
+            pushed-out-frame return family, a platform-scoped diagnostic
+            rather than a CFI delivery, and the row grades in the declared
+            column (the 2026-11-26 evidence-mode re-grade, zero findings);
+            code-identity movers on this lane stay
             within all-declared record sets.
         </p>
 
@@ -448,7 +452,7 @@
         </p>
     </main>
     <footer>
-        <p>Last updated: 2026-11-25 — keep in sync with <code>env.sh</code> and
+        <p>Last updated: 2026-11-26 — keep in sync with <code>env.sh</code> and
             <code>scripts/</code>.</p>
     </footer>
 </body>

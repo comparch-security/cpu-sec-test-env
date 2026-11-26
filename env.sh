@@ -6,7 +6,25 @@
 # pins, URLs and timeouts live HERE - no script hard-codes them.
 
 # ---- bench pin (submodule commit; prerequisite for the whole lane set) ----
-# 0eb79b6 is the deferral-disposition batch, "Resolve six open deferrals:
+# 8d07b2a declares the held morello outcome, "Declare the held morello
+# cfi-return-without-call outcome (260)": one expect-results entry joins
+# cfi-return-without-call -- 260 (256+SIGILL) is Morello's own rendering
+# of the pushed-out-frame return family (the sibling ports deliver the
+# declared 16/266 bus-error renderings; this port dies on a raw SIGILL
+# the case's SIGBUS trip-wire does not catch), reproducible across pins
+# and payload generations and named site-neutrally over both stamps (the
+# f4c916a-era 20261024T134855Z and the 0eb79b6-era 20261124T174337Z) --
+# the observation the 2026-10-25 intent check held undeclared for exactly
+# one guest-side measurement, now declared as a platform-scoped
+# diagnostic, never a CFI delivery.  Registry-only delta: corpus keys
+# hash the macro map alone (no binary moves; catalog unchanged), so the
+# eleven stamps recorded at 0eb79b6 stay valid and the consuming env
+# cycle is an evidence-mode re-grade (compare_lanes --registry-pin
+# 8d07b2a, no lane runs): the held row joins the declared column and the
+# eleven-lane gate's single finding dissolves.  Closes
+# declare-aarch64-morello-cfi-return, delivered bench-side from this
+# repo's pending-defer envelope.
+# Beneath it, 0eb79b6 is the deferral-disposition batch, "Resolve six open deferrals:
 # ARCH-forcing hoist, skip-row retirement, evidence closure": two behavioural
 # changes.  The Makefile hoists both flag forcings above the first ARCH
 # consumer, so flag-only invocations compose the forced ARCH everywhere (lane
@@ -113,7 +131,7 @@
 # (f4c916a), the scheduler's corpus mode (a09f570) and the opcode-extraction
 # fix (74195c4).  The tracked registry is never swapped, so the submodule stays
 # clean through a deploy and any dirt in it is a real edit.
-BENCH_COMMIT=0eb79b6aaf4ed5b77c5c20ad858ff343f1ae003e
+BENCH_COMMIT=8d07b2a5a78638b686919d2c9390b5a7e4dfce99
 
 # Every lane run's preflight: `git -C benchmark status --short` must be empty
 # (the deploy legs, the run legs and each lane's post-clean assert all read
